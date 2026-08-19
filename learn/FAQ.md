@@ -65,6 +65,6 @@ There isn't one! DevIndex is a pure "Fat Client" application served via GitHub P
 
 The DevIndex and the underlying Neo.mjs engine are open-source and thrive on community involvement. If reading through these guides has sparked your interest in multi-threaded web development, we would love to have you on board!
 
-*   **Explore the Code:** Dive into the Neo.mjs repository and the DevIndex source code on [GitHub](https://github.com/neomjs/neo).
+*   **Explore the Code:** The DevIndex app and its Data Factory live in [neomjs/devindex](https://github.com/neomjs/devindex); the engine underneath them is [neomjs/neo](https://github.com/neomjs/neo).
 *   **Join the Community:** Connect with us, ask questions, and share your ideas on our [Discord Server](https://discord.gg/6p8paPq).
-*   **Report Issues:** Found a bug or have a feature request? Open an issue on our [Tracker](https://github.com/neomjs/neo/issues).
+*   **Report Issues:** Found a bug or have a feature request? Open an issue on the [DevIndex tracker](https://github.com/neomjs/devindex/issues). Issues about the engine itself belong on [neomjs/neo](https://github.com/neomjs/neo/issues).

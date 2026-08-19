@@ -75,7 +75,7 @@ For detailed information on how to permanently remove your profile from the inde
 
 The DevIndex is currently in **v1**. While the underlying Neo.mjs runtime and the autonomous Data Factory backend are extremely advanced, the platform is continuously evolving. 
 
-We highly welcome community feedback, feature requests, and bug reports. You can submit these directly via issues on the main [neomjs/neo](https://github.com/neomjs/neo/issues) repository. Opening a ticket is the easiest and most impactful way to contribute to the project's evolution!
+We highly welcome community feedback, feature requests, and bug reports. You can submit these directly via issues on the [neomjs/devindex](https://github.com/neomjs/devindex/issues) repository — anything about the Neo.mjs engine itself belongs on [neomjs/neo](https://github.com/neomjs/neo/issues) instead. Opening a ticket is the easiest and most impactful way to contribute to the project's evolution!
 
 **A Note on Pull Requests:** 
 A Pull Request **MUST** reference an existing GitHub issue ticket. This is a strict project requirement to ensure all architectural changes are discussed and documented first.

@@ -110,10 +110,17 @@ by naming them explicitly.
     hours. Splitting the process removes the coupling that flag protected against, so it is
     deliberately not ported. Carrying it here would import a workaround into a structure that cannot
     have the problem, and would read as though it still could.
-5.  **The working set round-trips, it is never committed:** the run fetches `users.jsonl`,
-    `tracker.json` and `visited.json` as one verified set and publishes them the same way. See
+5.  **The working set is fetched and published as a set, never committed:** the run hydrates all nine
+    files as one verified set and publishes them the same way. See
     [Storage](./Storage.md#the-working-set-derived-delivered-never-versioned) — this is the single most
     important invariant in the pipeline, and the reason `neomjs/neo`'s `.git` is 5.2 GB.
+
+    ⚠️ **The round trip does not close yet, and it is the reason two sync cursors look frozen.**
+    `config.publishedWorkingSet.baseUrl` still resolves to `neomjs/neo`'s `pages` copy, while the
+    publish step writes to the content-plane prefix. A run therefore adopts one artifact and publishes
+    a different one, so nothing it decides survives into the next run — including `optin-sync.json`,
+    which has not advanced since 2026-03-29. Tracked as neomjs/neo#17394, where it turns out to have a
+    privacy consequence rather than just a stale-data one. Read that before changing anything here.
 
 ### Cadence
 

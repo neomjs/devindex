@@ -87,8 +87,14 @@ who WRITES a file. `blocklist.json` looked curated and is not: `OptOut` appends 
 somebody asks to be removed. Keeping it in git therefore protected an audit trail that was never
 being written, because a runner is discarded — the opt-out did not survive the run that honoured it,
 while the closing comment had already told the user it had. Every file here is pipeline state, so
-every file round-trips through the publication and the assertion is now total. The human interface
+every file is published as part of the set and the assertion is now total. The human interface
 for opt-in and opt-out is the ISSUE FLOW, not the file.
+
+**Publishing is not yet the same thing as round-tripping**, and the difference currently matters:
+`baseUrl` below still points at `neomjs/neo`'s `pages` copy rather than at what this pipeline
+publishes, so a run reads one artifact and writes another. Anything a run decides about these files —
+a new blocklist entry, an advanced sync cursor — is published where nothing reads it and is gone by
+the next run. neomjs/neo#17394 carries the fix and the reason it is more than untidiness.
 
 **They are fetched as a set, and verified as a set.** `Storage.hydrateWorkingSet()` downloads all
 three from `config.publishedWorkingSet.baseUrl` once per process, before anything reads them, and

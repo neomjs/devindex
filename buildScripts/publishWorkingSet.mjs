@@ -62,6 +62,8 @@ async function publish() {
 
     const members = Storage.workingSetMembers();
 
+    await assertNotCollapsed();
+
     // Recomputed from what is on disk RIGHT NOW rather than trusting a stamp written earlier in the
     // run: the manifest must describe the bytes actually being uploaded, or it certifies a set that
     // was never published.
@@ -72,6 +74,14 @@ async function publish() {
         await run('gcloud', ['storage', 'cp', localPath, `${bucket}/${file}`]);
     }
 
+    // A dated copy under a separate prefix, so there is a restore ladder past the 7-day soft-delete
+    // window the bucket provides. Daily rather than hourly: hourly would be 24x the storage for
+    // restore points nobody distinguishes, and the soft-delete window already covers today.
+    const today = new Date().toISOString().slice(0, 10),
+          users = members.find(member => member.key === 'users');
+
+    await run('gcloud', ['storage', 'cp', users.path, `${bucket}/archive/users-${today}.jsonl`]);
+
     // LAST, and the ordering is the guarantee — see the module docblock.
     const manifestPath = config.paths.workingSetManifest,
           manifestFile = manifestPath.slice(manifestPath.lastIndexOf('/') + 1);
@@ -79,6 +89,70 @@ async function publish() {
     await run('gcloud', ['storage', 'cp', manifestPath, `${bucket}/${manifestFile}`]);
 
     console.log(`[publish] Published ${members.length} objects plus the manifest to ${bucket}.`)
+}
+
+/**
+ * @summary Refuses to publish an index that lost a large share of its records.
+ *
+ * **The failure this exists for is invisible, self-reinforcing, and permanent.** The pipeline reads
+ * its own output: a corrupt set is published, the next run fetches it, the manifest MATCHES because
+ * it is exactly what we wrote, and the damage is adopted as truth and compounds. The manifest proves
+ * integrity of transmission, never correctness of content — a corrupt-but-consistent set passes every
+ * check this pipeline has.
+ *
+ * Under git that was survivable: an implausible diff landed in a commit and 1,800 restore points sat
+ * behind it. Publishing to an object store replaces that with a 7-day soft-delete window, so a
+ * corruption nobody notices inside a week is unrecoverable.
+ *
+ * So this compares what is about to be published against what was fetched at the start of the run and
+ * refuses a large drop. Pruning is legitimate and bounded — the meritocracy cap evicts the tail — but
+ * it evicts a few, not a fifth. The threshold is deliberately loose: this is a catastrophe brake, not
+ * a quality gate, and a brake that fires on ordinary churn gets disabled.
+ * @returns {Promise<void>}
+ */
+async function assertNotCollapsed() {
+    const
+        THRESHOLD = 0.8,
+        current   = (await fs.readFile(config.paths.users, 'utf-8').catch(() => '')).split('\n').filter(Boolean).length,
+        previous  = await fetchPublishedCount();
+
+    if (!previous) {
+        console.log('[publish] No published index to compare against — skipping the collapse check.');
+        return
+    }
+
+    if (current < previous * THRESHOLD) {
+        throw new Error(
+            `Refusing to publish: the index dropped from ${previous.toLocaleString('en-US')} to ` +
+            `${current.toLocaleString('en-US')} records (${Math.round(100 * current / previous)}%). ` +
+            'Pruning removes a tail, not a fifth of the index. Publishing this would overwrite the only ' +
+            'copy and the next run would adopt it as truth. Set DEVINDEX_ALLOW_INDEX_COLLAPSE=1 if this ' +
+            'drop is genuinely intended.'
+        )
+    }
+
+    console.log(`[publish] Index size check: ${current.toLocaleString('en-US')} records (was ${previous.toLocaleString('en-US')}).`)
+}
+
+/**
+ * @summary Record count of the currently published index, or null when there is none.
+ * @returns {Promise<Number|null>}
+ */
+async function fetchPublishedCount() {
+    if (process.env.DEVINDEX_ALLOW_INDEX_COLLAPSE) return null;
+
+    const {baseUrl, timeout} = config.publishedWorkingSet,
+          file               = config.paths.users.slice(config.paths.users.lastIndexOf('/') + 1);
+
+    try {
+        const response = await fetch(`${baseUrl}${file}`, {signal: AbortSignal.timeout(timeout)});
+
+        if (!response.ok) return null;
+
+        return (await response.text()).split('\n').filter(Boolean).length
+    } catch (error) {
+        return null
+    }
 }
 
 /**

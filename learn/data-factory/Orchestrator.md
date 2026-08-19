@@ -119,11 +119,25 @@ by naming them explicitly.
 
 Two things are deliberately absent, and the workflow says so where a reader meets them:
 
-*   **No `schedule:` trigger.** The publish destination is not chosen yet. These stages are not inert —
-    `optout` comments on and closes real issues — so running hourly with nowhere to publish would mutate
-    other repositories to produce output the runner discards.
-*   **No publish step.** It is present but fails loudly, so a run cannot be mistaken for a working
-    pipeline.
+*   **No `schedule:` trigger.** These stages are not inert — `optout` comments on and closes real
+    issues — so running hourly with nowhere to publish would mutate other repositories to produce
+    output the runner discards. The schedule lands once a dispatched run publishes successfully.
+*   **The publish step exists but has no destination.** `buildScripts/publishWorkingSet.mjs` uploads
+    the three payload objects and then the manifest — in that order, because a manifest must never
+    advertise a set that is still arriving. It fails loudly until `DEVINDEX_PUBLISH_BUCKET` and
+    Google auth are provisioned, so a run cannot be mistaken for a working pipeline.
+
+    Auth is **keyless**: Workload Identity Federation exchanges the runner's OIDC token for a
+    short-lived credential, so no Google secret is stored in this repository — consistent with the
+    GitHub App token, which is also minted per run rather than stored. The identity is dedicated to
+    this job and scoped to object writes on one prefix; an hourly data job has no business holding
+    more. Bindings are per-repository, so this repository needs its own.
+
+    `buildScripts/setup-gcp-publish.sh` does the whole thing, once, and is idempotent. It reuses the
+    existing Workload Identity pool and adds only what is new: a dedicated service account with
+    object-write on one prefix, a per-repository impersonation binding, and the secrets plus one
+    variable. Export the deployment identifiers first — they live with the deployment configuration,
+    not in this repository. Neither secret is a credential: one is a resource path, one an address.
 
 Until both land, dispatch the workflow manually. Leaving `run_collection` **off** performs a credential
 probe with no side effects — it mints the token, confirms both intake repositories are reachable, and

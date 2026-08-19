@@ -395,7 +395,7 @@ class Storage extends Base {
         const
             {baseUrl, timeout} = config.publishedWorkingSet,
             members            = this.workingSetMembers(),
-            provenance         = await this.readJson(config.paths.workingSetProvenance, null),
+            manifest           = await this.fetchManifest(baseUrl, timeout),
             fetched            = {};
 
         for (const {key, file, path: localPath} of members) {
@@ -419,11 +419,11 @@ class Storage extends Base {
 
             // Absence of a record is not mismatch. A deployment that has never published has nothing
             // to compare against, and treating that as tampering would make this path unreachable.
-            if (provenance?.digests) {
-                if (provenance.digests[key] !== digest) {
+            if (manifest?.digests) {
+                if (manifest.digests[key] !== digest) {
                     return this.rejectWorkingSet(
-                        `${file} does not match what we last published ` +
-                        `(recorded ${String(provenance.digests[key]).slice(0, 12)}, fetched ${digest.slice(0, 12)})`
+                        `${file} does not match the published manifest ` +
+                        `(recorded ${String(manifest.digests[key]).slice(0, 12)}, fetched ${digest.slice(0, 12)})`
                     )
                 }
             }
@@ -431,8 +431,8 @@ class Storage extends Base {
             fetched[key] = {text, localPath};
         }
 
-        if (!provenance?.digests) {
-            console.warn('[Storage] No working-set provenance recorded yet — adopting the published set unverified. This is expected exactly once.');
+        if (!manifest?.digests) {
+            console.warn('[Storage] No published manifest — adopting the fetched set unverified. Expected while this repository is not yet the publisher.');
         }
 
         // Written only after EVERY member fetched and verified, so a failure part-way through leaves
@@ -443,6 +443,31 @@ class Storage extends Base {
         }
 
         console.log(`[Storage] Adopted the published working set (${members.length} files).`)
+    }
+
+    /**
+     * @summary Fetches the published manifest, or null when the publication carries none.
+     *
+     * Null is not an error: while `neomjs/neo` is still the publisher there is no manifest beside the
+     * set, and the caller adopts unverified. A manifest appears the first time THIS repository
+     * publishes, and verification becomes live from then on without any code change.
+     * @param {String} baseUrl
+     * @param {Number} timeout
+     * @returns {Promise<Object|null>}
+     * @private
+     */
+    async fetchManifest(baseUrl, timeout) {
+        const file = config.paths.workingSetManifest.slice(config.paths.workingSetManifest.lastIndexOf('/') + 1);
+
+        try {
+            const response = await fetch(`${baseUrl}${file}`, {signal: AbortSignal.timeout(timeout)});
+
+            if (!response.ok) return null;
+
+            return JSON.parse(await response.text())
+        } catch (error) {
+            return null
+        }
     }
 
     /**
@@ -525,7 +550,7 @@ class Storage extends Base {
      * drift on any formatting change, failing in a way that looks like tampering.
      * @returns {Promise<void>}
      */
-    async recordWorkingSetProvenance() {
+    async recordWorkingSetManifest() {
         const digests = {};
 
         for (const {key, path: localPath} of this.workingSetMembers()) {
@@ -536,7 +561,7 @@ class Storage extends Base {
             digests[key] = this.digestOf(content);
         }
 
-        await this.writeJson(config.paths.workingSetProvenance, {
+        await this.writeJson(config.paths.workingSetManifest, {
             digests,
             publishedAt: new Date().toISOString()
         });
@@ -690,9 +715,9 @@ class Storage extends Base {
         // Any member changing re-stamps the WHOLE set, because the record is set-scoped: a per-file
         // stamp could be partially current, which describes a state no reader may act on.
         // `workingSetProvenance` itself is excluded, or recording would recurse.
-        if (path !== config.paths.workingSetProvenance &&
+        if (path !== config.paths.workingSetManifest &&
             this.workingSetMembers().some(member => member.path === path)) {
-            await this.recordWorkingSetProvenance();
+            await this.recordWorkingSetManifest();
         }
     }
 }

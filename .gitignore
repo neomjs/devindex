@@ -20,12 +20,13 @@
 # state with no browser consumer at all.
 #
 # The CURATED files in the same directory are deliberately NOT ignored — allowlist, blocklist,
-# failed, optin-sync, optout-sync, threshold, and index-provenance.json total 543 bytes and cannot be
+# failed, optin-sync, optout-sync and threshold total 543 bytes and cannot be
 # regenerated. `blocklist.json` carries somebody's opt-out decision. Ignoring the directory wholesale
 # would discard that audit trail silently, which is why the guard asserts they stay tracked.
 /apps/devindex/resources/data/users.jsonl
 /apps/devindex/resources/data/tracker.json
 /apps/devindex/resources/data/visited.json
+/apps/devindex/resources/data/working-set-manifest.json
 
 # IDEs and editors
 /.idea

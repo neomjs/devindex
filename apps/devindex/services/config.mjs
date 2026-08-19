@@ -174,26 +174,30 @@ const defaultConfig = {
         optinSync: path.resolve(projectRoot, 'apps/devindex/resources/data/optin-sync.json'),
 
         /**
-         * Provenance for the last WORKING SET this pipeline published: one SHA-256 per derived file,
-         * recorded together in a single write. Small, and deliberately tracked in git even though the
-         * files it describes are permanently out of git — it is the trusted anchor the fetched set is
-         * checked against, so it must live somewhere those files cannot influence.
+         * Manifest for the published WORKING SET: one SHA-256 per derived file, written together.
          *
          * **Set-scoped rather than per-file, because a partial match is the dangerous outcome.**
-         * `users.jsonl`, `tracker.json` and `visited.json` are one working set: every run reads all
-         * three, mutates all three and writes all three (`Cleanup` alone rewrites the lot before every
-         * command). Verifying them independently would allow a run to proceed with an index from one
-         * generation and a tracker from another — and `tracker.json` is what decides who gets
+         * The three derived files are one working set: every run reads all three, mutates all three
+         * and writes all three. Verifying them independently would let a run proceed with an index
+         * from one generation and a tracker from another — and `tracker.json` decides who gets
          * enriched, so a torn read makes the scheduler skip users that are stale and re-enrich users
-         * that are not, while every log line stays green. One record, checked as a unit, is what makes
-         * that unrepresentable.
+         * that are not, while every log line stays green.
          *
-         * A content digest rather than the served `ETag`: an `ETag` is host-assigned and survives
-         * neither recompression nor a CDN swap, so it answers *is this the same response* where this
-         * needs *is this the same content*.
+         * **A MANIFEST, not provenance, and the distinction is load-bearing.** It was tracked in git,
+         * which made it a trusted anchor the artifacts could not influence. That required committing
+         * it on every run — and an hourly commit needs a write checkout, a push credential and an
+         * answer to "did the branch move", which is precisely the machinery this migration exists to
+         * delete. 355 bytes is not worth reintroducing a publication state machine for.
+         *
+         * So it ships WITH the set and is derived rather than trusted. What it still catches: a torn
+         * or partial publication, a file that failed to propagate, and any mixing of generations —
+         * the operational failures that actually occur. What it can no longer catch: a wholesale,
+         * internally consistent overwrite of all four objects. That is the accepted cost, stated
+         * rather than implied, and it is the right trade because a consistently stale set is safe to
+         * work from while a mixed one is not.
          * @type {string}
          */
-        workingSetProvenance: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-provenance.json')
+        workingSetManifest: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-manifest.json')
     },
 
     /**

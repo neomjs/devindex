@@ -88,8 +88,17 @@ three from `config.publishedWorkingSet.baseUrl` once per process, before anythin
 adopts them **all-or-nothing**. A partial adoption is the dangerous outcome: `tracker.json` decides who
 gets enriched, so an index from one generation paired with a tracker from another makes the Updater
 skip users that are stale and re-enrich users that are not — silently, with every log line green.
-`working-set-provenance.json` holds one digest per file, written together and checked together, so a
+`working-set-manifest.json` holds one digest per file, written together and checked together, so a
 mismatch on any one rejects the whole set rather than mixing.
+
+It is a **manifest**, not provenance, and the distinction is deliberate. It began as a git-tracked
+anchor the artifacts could not influence — which is stronger, and which required committing it on
+every run. An hourly commit needs a write checkout, a push credential and an answer to "did the branch
+move": the entire publication state machine this migration exists to delete, for 355 bytes. So it
+ships *with* the set instead. It still catches a torn or partial publication, a file that failed to
+propagate, and any mixing of generations — the failures that actually happen. It cannot catch a
+wholesale, internally consistent overwrite. That is the accepted cost, and it is the right trade,
+because a consistently stale set is safe to work from while a mixed one is not.
 
 Rejection is never silent, and never empty. A refused set falls back to the local copies and says why.
 If there is no local index either, `getUsers()` **throws** rather than returning `[]` — because

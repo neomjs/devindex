@@ -2,16 +2,16 @@ name: DevIndex Data Sync
 
 # The four collection stages, moved out of `neomjs/neo` per neomjs/neo#17375.
 #
-# ## Why this workflow has NO `schedule:` yet, and must not get one
+# ## Why this workflow has NO `schedule:` yet
 #
-# The publish step does not exist (see `Publish the derived artifacts` below), and these stages have
-# real side effects: `devindex:optout` COMMENTS ON AND CLOSES issues in `devindex-opt-out`, and the
-# Spider and Updater spend GitHub API quota. An hourly run without a publish destination would
-# therefore mutate other people's repositories and burn quota to produce output that is discarded at
-# the end of the job. That is strictly worse than not running.
+# The publish step and its credentials now exist. What is still deliberate is the absence of a
+# schedule: it goes on once a dispatched run publishes successfully, not before. These stages have
+# real side effects — `devindex:optout` COMMENTS ON AND CLOSES issues in `devindex-opt-out`, and the
+# Spider and Updater spend API quota — so running hourly with nowhere to publish would mutate other
+# people's repositories to produce output the runner discards. Strictly worse than not running.
 #
-# So: `workflow_dispatch` only, and collection is opt-in per run. Adding `schedule:` is the LAST step
-# of neomjs/neo#17375, not an oversight — it lands with the publish destination and not before.
+# So: `workflow_dispatch` only, collection opt-in per run. Turning on `schedule: '0 * * * *'` is the
+# LAST step of neomjs/neo#17375 and lands once a dispatched run publishes successfully — not before.
 #
 # ## What is deliberately NOT here: `publishGeneratedProgressOnFailure`
 #
@@ -48,13 +48,14 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      # `contents: read` and nothing else. This workflow does not push: the derived artifacts are
-      # published as an artifact rather than committed, which is the entire point of neomjs/neo#17375.
-      # The Intake identity below is installed on the opt-in/opt-out repositories, never on this one.
+      # `contents: read`, and that is the whole point of neomjs/neo#17375: the derived files are
+      # published as objects, never committed, so this job needs no write anywhere in git. The Intake
+      # identity below is installed on the opt-in/opt-out repositories, never on this one.
       contents: read
-      # Needed only so `gh run download` can reach the PREVIOUS run's state artifact. Read-only: this
-      # job never deletes or rewrites another run's artifacts.
-      actions: read
+      # Required for Workload Identity Federation: the runner mints an OIDC token that GCP exchanges
+      # for a short-lived access token. This is what lets the publish step hold NO stored Google
+      # credential — see the auth step.
+      id-token: write
 
     steps:
       # The Intake App is installed on the DevIndex intake repositories, NOT on this one, so the
@@ -120,31 +121,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # `tracker.json` and `visited.json` are the Spider's discovery memory: which logins are known
-      # and which have been walked. They are gitignored with `users.jsonl` and have no browser
-      # consumer at all, so they are neither committed nor published — they only have to survive from
-      # one run to the next, which is what an artifact is for.
-      #
-      # NON-FATAL by construction, and the first run proves why: there is no previous artifact to
-      # download and that is the normal bootstrap, not an error. A missing artifact costs the Spider
-      # rediscovery time and nothing else — the same reason these files are safe to keep out of git,
-      # applied one layer up.
-      #
-      # Deliberately NOT an `if: always()` upload at the end. Persisting state from a FAILED run is
-      # the same shape as `publishGeneratedProgressOnFailure`, which this workflow refuses on purpose:
-      # it trades a simple invariant ("state comes from a run that completed") for protection against
-      # a failure mode that is already cheap. A crashed run discards its state and the next one
-      # re-derives.
-      - name: Restore discovery state
-        if: ${{ inputs.run_collection }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh run download --name devindex-discovery-state --dir apps/devindex/resources/data \
-            -R "${{ github.repository }}" 2>/dev/null \
-            && echo "Restored discovery state from the previous run." \
-            || echo "No previous discovery state — the Spider will rediscover. Expected on the first run."
-
       # Probes reachability of both intake repositories and stops. Safe to repeat as often as an
       # installation needs correcting, which is the property that makes it worth having: the stages
       # that would otherwise serve as the check are the ones that mutate.
@@ -193,42 +169,67 @@ jobs:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:update
 
-      # Uploaded only after every stage succeeded — see the restore step for why a failed run is
-      # allowed to lose its state. Retention is short on purpose: this is a handoff between
-      # consecutive runs, not an archive, and a month of 3.6 MB snapshots would be storage nobody
-      # reads.
-      - name: Save discovery state
-        if: ${{ inputs.run_collection }}
-        uses: actions/upload-artifact@v4
+      # The working set round-trips through the PUBLICATION, not through git and not through an
+      # Actions artifact. `hydrateWorkingSet` fetched it at the start of this run; this puts it back.
+      # That is why there is no upload-artifact step here any more: one mechanism for four files with
+      # one lifecycle, rather than two mechanisms and two failure modes.
+      #
+      # KEYLESS. Workload Identity Federation exchanges the runner's OIDC token for a short-lived
+      # credential, so no Google secret is stored in this repository at all — which keeps this step
+      # consistent with the GitHub App token above, minted fresh every run rather than stored.
+      #
+      # The identity is dedicated to this job and scoped to object writes on one prefix. An hourly
+      # data job should not be able to do anything else, so it does not reuse a broader one.
+      # Deliberately NOT gated on `run_collection`: a probe that cannot test the publish credential
+      # only checks half the pipeline, and the half it skips is the one that was just configured. WIF
+      # authentication has no side effects — it exchanges an OIDC token — so there is no cost to
+      # exercising it on every dispatch.
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
         with:
-          name: devindex-discovery-state
-          retention-days: 7
-          if-no-files-found: error
-          path: |
-            apps/devindex/resources/data/tracker.json
-            apps/devindex/resources/data/visited.json
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.PUBLISH_SA_EMAIL }}
 
-      # ────────────────────────────────────────────────────────────────────────────────────────────
-      # NOT IMPLEMENTED — the one step that is blocked, and the reason the schedule is absent.
-      #
-      # The derived artifacts (`users.jsonl`, `tracker.json`, `visited.json`, ~26.5 MiB) must be
-      # published WITHOUT a commit. Committing them is the defect neomjs/neo#17375 exists to stop:
-      # 1,790 lifetime commits to `users.jsonl` are 90.5% of neo's 5.21 GiB of blob bytes, and
-      # `neomjs/pages` is the live proof that a fresh repository doing the same reaches multiple GiB
-      # inside six months.
-      #
-      # The destination is an operator decision (own GitHub Pages artifact deploy, an upload to
-      # whatever serves neomjs.com, or object storage). Every candidate supports publish-without-commit;
-      # only the branch-based Pages source does not, and that source is precisely the mechanism that
-      # built the 985 MB.
-      #
-      # Until it lands, this job collects and the output dies with the runner. That is why
-      # `run_collection` defaults to false and why there is no `schedule:` — see the header.
-      # ────────────────────────────────────────────────────────────────────────────────────────────
-      - name: Publish the derived artifacts
-        if: ${{ inputs.run_collection }}
+      - name: Setup Cloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+
+      # Read-only, and it proves the part a credential check usually misses: not merely that the token
+      # minted, but that this identity can actually SEE the destination. A `storage.objectAdmin`
+      # binding on the wrong bucket authenticates perfectly and fails at the first write.
+      - name: Probe publish access
+        env:
+          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET || secrets.DEVINDEX_PUBLISH_BUCKET }}
         run: |
-          echo "::error::No publish destination is configured yet (neomjs/neo#17375)."
-          echo "The collection stages ran and their output is being discarded."
-          echo "Failing loudly rather than exiting 0, so this cannot be mistaken for a working pipeline."
-          exit 1
+          set -euo pipefail
+          if [ -z "${DEVINDEX_PUBLISH_BUCKET}" ]; then
+            echo "::error::DEVINDEX_PUBLISH_BUCKET is set as neither a variable nor a secret."
+            exit 1
+          fi
+          echo "Destination: ${DEVINDEX_PUBLISH_BUCKET}"
+          # Captured rather than swallowed: the two failures here point at DIFFERENT things and an
+          # `|| echo "check the binding"` blames the wrong one. Measured 2026-08-19 on run
+          # 32266632122 — a 403 on `iam.serviceAccounts.getAccessToken` is IMPERSONATION being
+          # refused (usually IAM propagation, which can take minutes after the binding is created),
+          # while a 403 on `storage.objects.list` is the bucket grant. The first resolves itself; the
+          # second never will.
+          if OUT=$(gcloud storage ls "${DEVINDEX_PUBLISH_BUCKET%/*}/" 2>&1); then
+            echo "Publish identity can read the destination."
+          elif echo "$OUT" | grep -q "impersonated credentials\|getAccessToken"; then
+            echo "::error::Impersonation refused. If the WIF binding was just created, wait a few minutes and re-run — IAM propagation. If it persists, the binding or the provider condition is wrong."
+            echo "$OUT" | head -5
+            exit 1
+          else
+            echo "::error::Authenticated, but cannot list the destination — this is the bucket grant, not the identity."
+            echo "$OUT" | head -5
+            exit 1
+          fi
+
+      - name: Publish the working set
+        if: ${{ inputs.run_collection }}
+        env:
+          # Either store works. It is not sensitive — a bucket path — so a variable is the better
+          # home: as a secret it is MASKED as *** in logs, which hides the destination in exactly the
+          # output you read when a publish goes wrong. Accepting both means neither choice fails
+          # silently by resolving to an empty string.
+          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET || secrets.DEVINDEX_PUBLISH_BUCKET }}
+        run: node ./buildScripts/publishWorkingSet.mjs

@@ -1,6 +1,7 @@
-import fs from 'fs/promises';
-import Base from '../../../node_modules/neo.mjs/src/core/Base.mjs';
-import config from './config.mjs';
+import {createHash} from 'crypto';
+import fs           from 'fs/promises';
+import Base         from '../../../node_modules/neo.mjs/src/core/Base.mjs';
+import config       from './config.mjs';
 
 /**
  * @summary DevIndex Persistence Layer (JSON File System).
@@ -353,11 +354,114 @@ class Storage extends Base {
     }
 
     /**
-     * Reads the rich users data (formerly data.json).
+     * Reads the rich users data, preferring the published artifact over the checkout copy.
      * @returns {Promise<Array<Object>>}
      */
     async getUsers() {
-        return this.readJson(config.paths.users, []);
+        const published = await this.readPublishedIndex();
+
+        return published ?? this.readJson(config.paths.users, []);
+    }
+
+    /**
+     * @summary Fetches the deployed index and returns it only if it matches recorded provenance.
+     *
+     * Ported from `neomjs/neo` #17374, where this pipeline still lives, so the producer obtains its
+     * previous state over HTTPS rather than from whatever the checkout happens to hold. That is the
+     * prerequisite for #17375: once nothing here READS the index from git, nothing requires it to be
+     * WRITTEN to git either, and 26.5 MiB of derived data stops accruing blobs forever.
+     * @returns {Promise<Array<Object>|null>} Parsed records, or `null` when the caller must fall back.
+     * @private
+     */
+    async readPublishedIndex() {
+        const {url, timeout} = config.publishedIndex;
+
+        let response, text;
+
+        try {
+            response = await fetch(url, {signal: AbortSignal.timeout(timeout)});
+
+            if (!response.ok) {
+                return this.rejectPublishedIndex(`HTTP ${response.status} from ${url}`);
+            }
+
+            text = await response.text();
+        } catch (error) {
+            return this.rejectPublishedIndex(`fetch failed for ${url}: ${error.message}`);
+        }
+
+        const
+            provenance = await this.readJson(config.paths.indexProvenance, null),
+            digest     = this.digestOf(text);
+
+        // Absence is not mismatch. The first run after adoption has nothing recorded to compare
+        // against, and treating that as a failure would make this path unreachable forever.
+        if (!provenance?.digest) {
+            console.warn('[Storage] No index provenance recorded yet — accepting the published index unverified. This is expected exactly once.');
+        } else if (provenance.digest !== digest) {
+            return this.rejectPublishedIndex(
+                `published index does not match what we last wrote (recorded ${provenance.digest.slice(0, 12)}, fetched ${digest.slice(0, 12)}). ` +
+                'Either the last publish has not propagated, or something else wrote to that URL.'
+            );
+        }
+
+        // Guarded, and the bootstrap run is exactly why. With provenance recorded, a mangled body
+        // fails the digest comparison above and never reaches here. With provenance ABSENT — the
+        // first run after adoption, which the branch above calls expected — nothing has verified
+        // these bytes, so a 200 carrying an HTML interstitial or a truncated transfer reaches
+        // `JSON.parse`. Unguarded, that throws out of `getUsers()` and takes the run down on the one
+        // run this method documents as normal.
+        try {
+            return text
+                .split('\n')
+                .filter(line => line.trim())
+                .map(line => JSON.parse(line));
+        } catch (error) {
+            return this.rejectPublishedIndex(`published index is not parseable JSONL: ${error.message}`);
+        }
+    }
+
+    /**
+     * @summary Records why the fetched index was refused, then hands the caller the checkout path.
+     *
+     * Audible by construction: a silent fallback would leave the git coupling in place while every
+     * log line claimed it had been removed.
+     * @param {String} reason
+     * @returns {null}
+     * @private
+     */
+    rejectPublishedIndex(reason) {
+        console.warn(`[Storage] Falling back to the checkout copy of the index — ${reason}`);
+        return null;
+    }
+
+    /**
+     * @summary Content digest used to prove a fetched index is the one this pipeline wrote.
+     * @param {String} content
+     * @returns {String} Hex-encoded SHA-256.
+     * @private
+     */
+    digestOf(content) {
+        return createHash('sha256').update(content, 'utf-8').digest('hex');
+    }
+
+    /**
+     * @summary Records what this pipeline just published, so the next run can recognise it.
+     *
+     * The digest is over the exact bytes written, which is what a later fetch returns — deriving it
+     * from the in-memory records instead would compare a re-serialisation against a transmission and
+     * drift on any formatting change, failing in a way that looks like tampering.
+     * @param {String} content Exact serialized index as written to disk.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async recordIndexProvenance(content) {
+        await this.writeJson(config.paths.indexProvenance, {
+            digest     : this.digestOf(content),
+            lines      : content.split('\n').filter(line => line.trim()).length,
+            bytes      : Buffer.byteLength(content, 'utf-8'),
+            publishedAt: new Date().toISOString()
+        });
     }
 
     /**
@@ -496,6 +600,14 @@ class Storage extends Base {
         const tempPath = `${path}.tmp`;
         await fs.writeFile(tempPath, content, 'utf-8');
         await fs.rename(tempPath, path);
+
+        // Recorded here rather than at each call site: the index is written from three places
+        // (`saveUsers`, the prune path, and Cleanup's reconciliation), and provenance that only some
+        // of them update is worse than none — a stale digest reads as a foreign artifact and would
+        // send every subsequent run down the fallback path for a reason nobody could find.
+        if (path === config.paths.users) {
+            await this.recordIndexProvenance(content);
+        }
     }
 }
 

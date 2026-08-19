@@ -360,7 +360,39 @@ class Storage extends Base {
     async getUsers() {
         const published = await this.readPublishedIndex();
 
-        return published ?? this.readJson(config.paths.users, []);
+        if (published) return published;
+
+        // **Fail closed. An absent prior index is indistinguishable from a lost one, and the two have
+        // opposite correct responses.**
+        //
+        // `updateUsers` merges new records INTO whatever this returns and writes the result as the
+        // whole index. So returning `[]` after a failed fetch does not degrade — it TRUNCATES: a run
+        // that enriched 200 users would publish an index of 200 and record provenance for it, and
+        // 49,800 contributors would be gone with every log line green.
+        //
+        // That was survivable while the checkout carried a committed copy, because the fallback always
+        // landed on ~50,000 real records. Removing the file from git removed that net, and this
+        // fallback outlived the assumption it was written under.
+        //
+        // A developer with a local copy still gets it — that path is unchanged and is why the check is
+        // for ABSENCE rather than for CI. Only the case with no fetched index AND no local one throws,
+        // because there is genuinely no prior state to merge into, and proceeding would destroy the
+        // index rather than rebuild it. A true first-ever run is the one case that legitimately has
+        // nothing, and it is not distinguishable from an outage — so it must be declared, not guessed.
+        const local = await this.readJson(config.paths.users, null);
+
+        if (local) return local;
+
+        if (process.env.DEVINDEX_ALLOW_EMPTY_INDEX) {
+            console.warn('[Storage] No published and no local index — proceeding EMPTY because DEVINDEX_ALLOW_EMPTY_INDEX is set. This publishes whatever this run produces as the entire index.');
+            return []
+        }
+
+        throw new Error(
+            'DevIndex has no prior index: the published artifact could not be read and no local copy exists. ' +
+            'Refusing to continue, because merging this run\'s output into an empty index would publish a truncated one. ' +
+            'Fix the fetch, run `npm run devindex:pull-data`, or set DEVINDEX_ALLOW_EMPTY_INDEX=1 if this really is a first-ever run.'
+        )
     }
 
     /**

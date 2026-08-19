@@ -52,6 +52,9 @@ jobs:
       # published as an artifact rather than committed, which is the entire point of neomjs/neo#17375.
       # The Intake identity below is installed on the opt-in/opt-out repositories, never on this one.
       contents: read
+      # Needed only so `gh run download` can reach the PREVIOUS run's state artifact. Read-only: this
+      # job never deletes or rewrites another run's artifacts.
+      actions: read
 
     steps:
       # The Intake App is installed on the DevIndex intake repositories, NOT on this one, so the
@@ -117,6 +120,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `tracker.json` and `visited.json` are the Spider's discovery memory: which logins are known
+      # and which have been walked. They are gitignored with `users.jsonl` and have no browser
+      # consumer at all, so they are neither committed nor published — they only have to survive from
+      # one run to the next, which is what an artifact is for.
+      #
+      # NON-FATAL by construction, and the first run proves why: there is no previous artifact to
+      # download and that is the normal bootstrap, not an error. A missing artifact costs the Spider
+      # rediscovery time and nothing else — the same reason these files are safe to keep out of git,
+      # applied one layer up.
+      #
+      # Deliberately NOT an `if: always()` upload at the end. Persisting state from a FAILED run is
+      # the same shape as `publishGeneratedProgressOnFailure`, which this workflow refuses on purpose:
+      # it trades a simple invariant ("state comes from a run that completed") for protection against
+      # a failure mode that is already cheap. A crashed run discards its state and the next one
+      # re-derives.
+      - name: Restore discovery state
+        if: ${{ inputs.run_collection }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download --name devindex-discovery-state --dir apps/devindex/resources/data \
+            -R "${{ github.repository }}" 2>/dev/null \
+            && echo "Restored discovery state from the previous run." \
+            || echo "No previous discovery state — the Spider will rediscover. Expected on the first run."
+
       # Probes reachability of both intake repositories and stops. Safe to repeat as often as an
       # installation needs correcting, which is the property that makes it worth having: the stages
       # that would otherwise serve as the check are the ones that mutate.
@@ -164,6 +192,21 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:update
+
+      # Uploaded only after every stage succeeded — see the restore step for why a failed run is
+      # allowed to lose its state. Retention is short on purpose: this is a handoff between
+      # consecutive runs, not an archive, and a month of 3.6 MB snapshots would be storage nobody
+      # reads.
+      - name: Save discovery state
+        if: ${{ inputs.run_collection }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: devindex-discovery-state
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            apps/devindex/resources/data/tracker.json
+            apps/devindex/resources/data/visited.json
 
       # ────────────────────────────────────────────────────────────────────────────────────────────
       # NOT IMPLEMENTED — the one step that is blocked, and the reason the schedule is absent.

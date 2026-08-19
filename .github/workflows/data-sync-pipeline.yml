@@ -2,16 +2,19 @@ name: DevIndex Data Sync
 
 # The four collection stages, moved out of `neomjs/neo` per neomjs/neo#17375.
 #
-# ## Why this workflow has NO `schedule:` yet
+# ## Cadence: every two hours, and it is a throughput decision
 #
-# The publish step and its credentials now exist. What is still deliberate is the absence of a
-# schedule: it goes on once a dispatched run publishes successfully, not before. These stages have
-# real side effects — `devindex:optout` COMMENTS ON AND CLOSES issues in `devindex-opt-out`, and the
-# Spider and Updater spend API quota — so running hourly with nowhere to publish would mutate other
-# people's repositories to produce output the runner discards. Strictly worse than not running.
+# Each run is bounded by the GraphQL window, not by `--limit 200`: a 5,000-point budget against a
+# 32-point per-user reservation, less a 100-point downstream reserve, admits ~153 users. So the
+# schedule is the only lever on throughput, and it sets how stale the tail of the index gets —
+# ~1,836 users/day here, a full sweep of 50,000 in roughly 27 days.
 #
-# So: `workflow_dispatch` only, collection opt-in per run. Turning on `schedule: '0 * * * *'` is the
-# LAST step of neomjs/neo#17375 and lands once a dispatched run publishes successfully — not before.
+# Hourly would halve that to ~14 days. Two hours is the operator's call on a corpus whose churn is low
+# at this size; if the tail proves too stale, the cheaper fix is measuring real `observedCost` against
+# the 32-point reservation rather than doubling the run count.
+#
+# `workflow_dispatch` stays, and with `run_collection` defaulting FALSE it remains a side-effect-free
+# probe of both credential paths.
 #
 # ## What is deliberately NOT here: `publishGeneratedProgressOnFailure`
 #
@@ -29,12 +32,19 @@ name: DevIndex Data Sync
 # It is absent on purpose. (neomjs/neo#17375 AC-4.)
 
 on:
+  schedule:
+    - cron: '0 */2 * * *'
+
   workflow_dispatch:
     inputs:
       run_collection:
-        # Default FALSE, so the ordinary dispatch is a credential probe with no side effects. The
+        # Default FALSE, so the ordinary DISPATCH is a credential probe with no side effects — the
         # mutating stages are exactly the ones you cannot safely repeat while fixing an installation,
         # which is when you most need to check whether the credential works.
+        #
+        # A SCHEDULED run always collects. `inputs` does not exist on a schedule event, so gating the
+        # stages on `inputs.run_collection` alone would skip every one of them and the pipeline would
+        # do nothing every two hours while reporting success.
         description: 'Run the collection stages. Leave off to probe credentials only.'
         type: boolean
         default: false
@@ -137,26 +147,26 @@ jobs:
       # below is independently gated on `run_collection`, and that gating is what ends the run. A step
       # called "Exit after probe" would describe a driver that does not exist.
       - name: Report probe-only run
-        if: ${{ !inputs.run_collection }}
+        if: ${{ github.event_name != 'schedule' && !inputs.run_collection }}
         run: echo "run_collection was not set — credential probe only, no collection performed."
 
       # Privacy first, and the ORDER is the guarantee rather than a preference: opt-in and opt-out are
       # processed BEFORE discovery or enrichment, so a user who asked to be removed cannot be indexed
       # by the Spider in the same run that honoured their request.
       - name: DevIndex Opt-In
-        if: ${{ inputs.run_collection }}
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:optin
 
       - name: DevIndex Opt-Out
-        if: ${{ inputs.run_collection }}
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:optout
 
       - name: DevIndex Spider
-        if: ${{ inputs.run_collection }}
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:spider -- --strategy random
@@ -164,7 +174,7 @@ jobs:
       # The 200-candidate argument is a rollout CEILING, not a promise: the Updater applies GraphQL
       # cost admission and may process fewer.
       - name: DevIndex Updater
-        if: ${{ inputs.run_collection }}
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:update
@@ -225,7 +235,7 @@ jobs:
           fi
 
       - name: Publish the working set
-        if: ${{ inputs.run_collection }}
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
           # Either store works. It is not sensitive — a bucket path — so a variable is the better
           # home: as a secret it is MASKED as *** in logs, which hides the destination in exactly the

@@ -115,13 +115,18 @@ by naming them explicitly.
     [Storage](./Storage.md#the-working-set-derived-delivered-never-versioned) — this is the single most
     important invariant in the pipeline, and the reason `neomjs/neo`'s `.git` is 5.2 GB.
 
-### Not yet wired
+### Cadence
 
-Two things are deliberately absent, and the workflow says so where a reader meets them:
+**Every two hours.** Each run is bounded by the GraphQL window rather than by `--limit 200`: a
+5,000-point budget against a 32-point per-user reservation, less a 100-point downstream reserve,
+admits about 153 users. The schedule is therefore the only lever on throughput — roughly 1,836
+users/day, a full sweep of the 50,000-user cap in about 27 days. Hourly would halve that to ~14 days.
 
-*   **No `schedule:` trigger.** These stages are not inert — `optout` comments on and closes real
-    issues — so running hourly with nowhere to publish would mutate other repositories to produce
-    output the runner discards. The schedule lands once a dispatched run publishes successfully.
+If the tail proves too stale, measure real `observedCost` against the 32-point reservation before
+doubling the run count; the reservation is a conservative bound and may be buying less than it costs.
+
+A **scheduled** run always collects. A **dispatched** run collects only with `run_collection` set, so
+the default dispatch stays a side-effect-free probe of both credential paths.
 *   **The publish step exists but has no destination.** `buildScripts/publishWorkingSet.mjs` uploads
     the three payload objects and then the manifest — in that order, because a manifest must never
     advertise a set that is still arriving. It fails loudly until `DEVINDEX_PUBLISH_BUCKET` and

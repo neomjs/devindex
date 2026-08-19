@@ -194,11 +194,25 @@ jobs:
       # only checks half the pipeline, and the half it skips is the one that was just configured. WIF
       # authentication has no side effects — it exchanges an OIDC token — so there is no cost to
       # exercising it on every dispatch.
+      # `export_environment_variables: false` is a CONFIDENTIALITY setting, not a tuning knob.
+      #
+      # By default this action exports `CLOUDSDK_PROJECT`, `CLOUDSDK_CORE_PROJECT`, `GCP_PROJECT`,
+      # `GCLOUD_PROJECT` and `GOOGLE_CLOUD_PROJECT` into the job environment. It derives them from
+      # the provider and service account — which ARE secrets and are masked — and then re-emits the
+      # project id as a plain variable. GitHub prints the environment block of every `run` step, and
+      # this repository is public, so the project id was appearing unmasked in world-readable logs
+      # once per step. Masking applies to secret VALUES, not to values derived from them.
+      #
+      # Turning the export off also withholds the credentials path, so the steps below would lose
+      # authentication. `credentials_file_path` is passed to them explicitly instead. The path is a
+      # temp filename and carries nothing.
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.PUBLISH_SA_EMAIL }}
+          export_environment_variables: false
 
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
@@ -208,38 +222,52 @@ jobs:
       # binding on the wrong bucket authenticates perfectly and fails at the first write.
       - name: Probe publish access
         env:
-          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET || secrets.DEVINDEX_PUBLISH_BUCKET }}
+          # A SECRET, not a variable. Repository variables are printed verbatim in the environment
+          # block of every `run` step, and this repository is public — so as a variable the
+          # destination was published to world-readable logs on every run. As a secret GitHub masks
+          # it as `***` everywhere it appears, including inside `gcloud` output.
+          #
+          # The cost is real and accepted: masking hides the destination in exactly the output you
+          # read when a publish goes wrong. Debuggability does not outrank the confidentiality
+          # ruling that put these identifiers in a secret store in the first place, and the error
+          # paths below are written to stay diagnostic without echoing the value.
+          DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ${{ steps.auth.outputs.credentials_file_path }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |
           set -euo pipefail
           if [ -z "${DEVINDEX_PUBLISH_BUCKET}" ]; then
-            echo "::error::DEVINDEX_PUBLISH_BUCKET is set as neither a variable nor a secret."
+            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set. Add it as a repository SECRET (not a variable — a variable is printed unmasked in this public repository's logs)."
             exit 1
           fi
-          echo "Destination: ${DEVINDEX_PUBLISH_BUCKET}"
-          # Captured rather than swallowed: the two failures here point at DIFFERENT things and an
-          # `|| echo "check the binding"` blames the wrong one. Measured 2026-08-19 on run
-          # 32266632122 — a 403 on `iam.serviceAccounts.getAccessToken` is IMPERSONATION being
-          # refused (usually IAM propagation, which can take minutes after the binding is created),
-          # while a 403 on `storage.objects.list` is the bucket grant. The first resolves itself; the
-          # second never will.
-          if OUT=$(gcloud storage ls "${DEVINDEX_PUBLISH_BUCKET%/*}/" 2>&1); then
+          # The two failures here point at DIFFERENT things and an `|| echo "check the binding"`
+          # blames the wrong one: a 403 on `iam.serviceAccounts.getAccessToken` is IMPERSONATION
+          # being refused — usually IAM propagation, which can take minutes after a binding is
+          # created — while a 403 on `storage.objects.list` is the bucket grant. The first resolves
+          # itself; the second never will. So the output is captured and classified.
+          #
+          # It is classified but NOT echoed, and that is the same rule as the secret above rather
+          # than caution for its own sake. GitHub masks the secret's exact value; it does not mask
+          # strings DERIVED from it, and `gcloud`'s errors quote the path in forms that do not match
+          # verbatim — a parent prefix, a URL-encoded variant. Echoing the raw error would publish
+          # what the secret exists to withhold. For the same reason this lists the full prefix rather
+          # than a `%/*`-truncated parent, so the value that reaches the log matches the secret and
+          # is masked.
+          if OUT=$(gcloud storage ls "${DEVINDEX_PUBLISH_BUCKET}/" 2>&1); then
             echo "Publish identity can read the destination."
           elif echo "$OUT" | grep -q "impersonated credentials\|getAccessToken"; then
-            echo "::error::Impersonation refused. If the WIF binding was just created, wait a few minutes and re-run — IAM propagation. If it persists, the binding or the provider condition is wrong."
-            echo "$OUT" | head -5
+            echo "::error::Impersonation refused. If the WIF binding was just created, wait a few minutes and re-run — IAM propagation. If it persists, the binding or the provider condition is wrong. Re-run with debug logging to see the raw error."
             exit 1
           else
-            echo "::error::Authenticated, but cannot list the destination — this is the bucket grant, not the identity."
-            echo "$OUT" | head -5
+            echo "::error::Authenticated, but cannot list the destination — this is the bucket grant, not the identity. Re-run with debug logging to see the raw error."
             exit 1
           fi
 
       - name: Publish the working set
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
-          # Either store works. It is not sensitive — a bucket path — so a variable is the better
-          # home: as a secret it is MASKED as *** in logs, which hides the destination in exactly the
-          # output you read when a publish goes wrong. Accepting both means neither choice fails
-          # silently by resolving to an empty string.
-          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET || secrets.DEVINDEX_PUBLISH_BUCKET }}
+          # Secret, for the reason given on the probe step above.
+          DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
+          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ${{ steps.auth.outputs.credentials_file_path }}
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: node ./buildScripts/publishWorkingSet.mjs

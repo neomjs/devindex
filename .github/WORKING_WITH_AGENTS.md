@@ -1,6 +1,6 @@
 # Working with AI Agents
 
-This guide provides essential instructions for human developers on how to effectively collaborate with AI agents within the Neo.mjs repository. Following these guidelines will help ensure that the agent is properly grounded in the project's context and can recover from common errors.
+This guide provides essential instructions for human developers on how to effectively collaborate with AI agents within the DevIndex repository. Following these guidelines will help ensure that the agent is properly grounded in the project's context and can recover from common errors.
 
 ## 1. Starting a Session: The Critical Handshake
 
@@ -8,7 +8,7 @@ To ensure the AI agent has the correct context and adheres to the project's spec
 
 Your very first prompt to the agent should be:
 
-> Read and follow all instructions inside @AGENTS_STARTUP.md
+> Read and follow all instructions inside @AGENTS.md
 
 Upon receiving this command, the agent will perform its initialization sequence, which includes reading the codebase structure, core classes, and coding guidelines. This grounding process is critical for its ability to provide accurate and relevant assistance.
 
@@ -122,7 +122,7 @@ If you see the agent proposing a destructive action (like deleting a file or rev
 
 It's helpful to think of an AI agent's session as a human lifetime. This analogy can help you understand its behavior and know when it's time to start fresh.
 
-1.  **Childhood (The Beginning):** A new session is like a child—motivated and eager to learn, but completely clueless about the specifics of the Neo.mjs project. Your first instruction to follow `AGENTS_STARTUP.md` is the start of its education.
+1.  **Childhood (The Beginning):** A new session is like a child—motivated and eager to learn, but completely clueless about the specifics of the DevIndex project. Your first instruction to follow `AGENTS.md` is the start of its education.
 
 2.  **Adulthood (The Sweet Spot):** As you guide the agent and it uses the knowledge base, the core concepts will "click." It enters an "adult" phase where it is incredibly productive, understands the context, and effectively assists with complex tasks. This is the sweet spot of your collaboration.
 

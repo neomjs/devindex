@@ -20,7 +20,7 @@ class MainContainerStateProvider extends StateProvider {
             /**
              * @member {String|null} data.contentPath=null
              */
-            contentPath: Neo.config.basePath + 'learn/guides/devindex/',
+            contentPath: Neo.config.basePath + 'learn/',
             /**
              * @member {Number|null} data.countPages=null
              */

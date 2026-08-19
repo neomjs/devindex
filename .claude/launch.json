@@ -1,0 +1,12 @@
+{
+    "version": "0.0.1",
+    "configurations": [
+        {
+            "name": "devindex-dev-server",
+            "runtimeExecutable": "npm",
+            "runtimeArgs": ["--prefix", "/Users/Shared/github/neomjs/devindex", "run", "server-start"],
+            "port": 8080,
+            "autoPort": true
+        }
+    ]
+}

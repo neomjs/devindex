@@ -88,10 +88,7 @@ async function publish() {
 
     await run('gcloud', ['storage', 'cp', manifestPath, `${bucket}/${manifestFile}`]);
 
-    // The destination is deliberately NOT echoed. It is held as a secret, so GitHub would mask it
-    // anyway — but masking is a backstop for values that escape, not a licence to emit them, and
-    // this script also runs outside Actions where nothing masks anything.
-    console.log(`[publish] Published ${members.length} objects plus the manifest.`)
+    console.log(`[publish] Published ${members.length} objects plus the manifest to ${bucket}.`)
 }
 
 /**

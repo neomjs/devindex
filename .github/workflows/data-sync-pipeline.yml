@@ -124,74 +124,47 @@ jobs:
       # Keyless, and NOT gated on `run_collection`: a probe that cannot exercise the publish credential
       # checks only half the pipeline, and WIF authentication has no side effects.
       #
-      # `export_environment_variables: false` is a confidentiality setting. The action otherwise exports
-      # `CLOUDSDK_PROJECT` and its siblings, deriving them from masked secrets and re-emitting the
-      # project id as a plain variable — and GitHub prints every step's environment block, in a public
-      # repository. Turning the export off also withholds the credentials path, so it is passed to the
-      # gcloud steps explicitly.
       - name: Authenticate to Google Cloud
-        id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.PUBLISH_SA_EMAIL }}
-          export_environment_variables: false
 
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
-
-      # Masking covers a secret's exact string and any superstring, never a substring. The secret holds
-      # the full destination, so a log line naming only the bucket would print in full — which is what
-      # `gcloud` errors do. The name is derived here rather than stored twice, keeping one source.
-      - name: Mask the destination's components
-        env:
-          DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
-        run: |
-          set -euo pipefail
-          NAME="${DEVINDEX_PUBLISH_BUCKET#gs://}"
-          NAME="${NAME%%/*}"
-          if [ -z "${NAME}" ]; then
-            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set, or is not a gs:// URL. It must be a repository SECRET."
-            exit 1
-          fi
-          echo "::add-mask::${NAME}"
-          echo "Destination components registered for masking."
 
       # Proves what a credential check usually misses: not that the token minted, but that this
       # identity can see the destination. A binding on the wrong bucket authenticates perfectly and
       # fails at the first write.
       - name: Probe publish access
         env:
-          # A SECRET, not a variable: variables are printed verbatim in every step's environment block,
-          # and this repository is public. Masking costs readability exactly when a publish fails, and
-          # that cost is accepted.
-          DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
-          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ${{ steps.auth.outputs.credentials_file_path }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+          # A repository variable: the destination is a bucket id, not a credential, and keeping it
+          # unmasked is what makes a failed publish readable in the log.
+          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET }}
         run: |
           set -euo pipefail
           if [ -z "${DEVINDEX_PUBLISH_BUCKET}" ]; then
-            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set. Add it as a repository SECRET (a variable is printed unmasked in this public repository's logs)."
+            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set. Add it as a repository variable."
             exit 1
           fi
           # The two failures mean different things: a 403 on `getAccessToken` is impersonation being
           # refused, usually IAM propagation, while a 403 on `storage.objects.list` is the bucket grant.
-          # The first resolves itself; the second never will. The raw error is classified but not
-          # echoed, since gcloud quotes the path in forms that do not match the secret verbatim.
+          # The first resolves itself; the second never will, so the output is classified rather than
+          # collapsed into one message.
           if OUT=$(gcloud storage ls "${DEVINDEX_PUBLISH_BUCKET}/" 2>&1); then
             echo "Publish identity can read the destination."
           elif echo "$OUT" | grep -q "impersonated credentials\|getAccessToken"; then
-            echo "::error::Impersonation refused. If the binding was just created, wait a few minutes and re-run. If it persists, the binding or the provider condition is wrong. Re-run with debug logging for the raw error."
+            echo "::error::Impersonation refused. If the binding was just created, wait a few minutes and re-run. If it persists, the binding or the provider condition is wrong."
+            echo "$OUT" | head -5
             exit 1
           else
-            echo "::error::Authenticated, but cannot list the destination — the bucket grant, not the identity. Re-run with debug logging for the raw error."
+            echo "::error::Authenticated, but cannot list the destination — the bucket grant, not the identity."
+            echo "$OUT" | head -5
             exit 1
           fi
 
       - name: Publish the working set
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
-          DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
-          CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ${{ steps.auth.outputs.credentials_file_path }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
+          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET }}
         run: node ./buildScripts/publishWorkingSet.mjs

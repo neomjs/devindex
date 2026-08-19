@@ -22,72 +22,46 @@ import {execFileSync} from 'child_process';
  * a derived file present on disk is correct and expected — every developer has one after
  * `npm run devindex:pull-data`. Testing for existence would fail on a healthy checkout.
  */
-const
-    DATA_DIR = 'apps/devindex/resources/data',
-
-    DERIVED = [
-        'users.jsonl',
-        'tracker.json',
-        'visited.json',
-        'working-set-manifest.json'
-    ],
-
-    CURATED = [
-        'allowlist.json',
-        'blocklist.json',
-        'failed.json',
-        'optin-sync.json',
-        'optout-sync.json',
-        'threshold.json'
-    ];
+const DATA_DIR = 'apps/devindex/resources/data';
 
 /**
- * @summary Paths git currently tracks under the data directory.
- * @returns {Set<String>} Basenames, not full paths.
+ * @summary Repo-relative paths git currently tracks under the data directory.
+ * @returns {String[]}
  */
-function trackedBasenames() {
-    const output = execFileSync('git', ['ls-files', DATA_DIR], {encoding: 'utf-8'});
-
-    return new Set(
-        output.split('\n')
-            .filter(line => line.trim())
-            .map(line => line.slice(line.lastIndexOf('/') + 1))
-    )
+function trackedPaths() {
+    return execFileSync('git', ['ls-files', DATA_DIR], {encoding: 'utf-8'})
+        .split('\n')
+        .filter(line => line.trim())
 }
 
 /**
- * @summary Runs both assertions and reports every violation, rather than the first.
+ * @summary Fails if ANYTHING under the data directory is tracked.
+ *
+ * Total rather than a named list, because the list was the bug. It used to name three "derived" files
+ * to keep out and six "curated" ones to keep in — a split by file SIZE, when the real question is who
+ * writes them. Every file there is pipeline state, including `blocklist.json`, which `OptOut` appends
+ * to and which therefore cannot survive in a runner that is discarded.
+ *
+ * A total assertion also covers the case a list cannot: a NEW file added to that directory and
+ * committed. Under the old guard it passed, because it was on neither list.
  * @returns {void}
  */
 function run() {
-    const
-        tracked = trackedBasenames(),
-        // Reported together: fixing one and rediscovering the other on the next run is two cycles for
-        // one problem, and these two failures have opposite remedies.
-        wronglyTracked   = DERIVED.filter(name => tracked.has(name)),
-        wronglyUntracked = CURATED.filter(name => !tracked.has(name));
+    const tracked = trackedPaths();
 
-    if (wronglyTracked.length === 0 && wronglyUntracked.length === 0) {
-        console.log(`[data-tracking] OK — ${DERIVED.length} derived file(s) untracked, ${CURATED.length} curated file(s) tracked.`);
+    if (tracked.length === 0) {
+        console.log(`[data-tracking] OK — nothing under ${DATA_DIR} is tracked.`);
         return
     }
 
-    if (wronglyTracked.length > 0) {
-        console.error(
-            `[data-tracking] DERIVED data is tracked and must not be: ${wronglyTracked.join(', ')}.\n` +
-            `[data-tracking] Fix: git rm --cached ${wronglyTracked.map(name => `${DATA_DIR}/${name}`).join(' ')}\n` +
-            `[data-tracking] These are regenerated every run. Committing them is what took neomjs/neo's .git to 4.1 GB.`
-        )
-    }
-
-    if (wronglyUntracked.length > 0) {
-        console.error(
-            `[data-tracking] CURATED data is NOT tracked and must be: ${wronglyUntracked.join(', ')}.\n` +
-            `[data-tracking] Fix: git add -f ${wronglyUntracked.map(name => `${DATA_DIR}/${name}`).join(' ')}\n` +
-            `[data-tracking] These cannot be regenerated — blocklist.json carries opt-out decisions. If a .gitignore\n` +
-            `[data-tracking] rule swept the whole directory, narrow it to the three derived files instead.`
-        )
-    }
+    console.error(
+        `[data-tracking] ${tracked.length} file(s) tracked under ${DATA_DIR}, and none may be:\n` +
+        tracked.map(path => `  ${path}`).join('\n') + '\n' +
+        `[data-tracking] Fix: git rm --cached ${tracked.join(' ')}\n` +
+        '[data-tracking] Every file here is written by the pipeline and round-trips through the\n' +
+        '[data-tracking] publication. Committing one makes each run permanent in history; leaving one\n' +
+        '[data-tracking] out of the working set silently discards what that run decided.'
+    );
 
     process.exit(1)
 }

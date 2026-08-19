@@ -479,11 +479,24 @@ class Storage extends Base {
      * @private
      */
     workingSetMembers() {
-        return ['users', 'tracker', 'visited'].map(key => ({
-            key,
-            path: config.paths[key],
-            file: config.paths[key].slice(config.paths[key].lastIndexOf('/') + 1)
-        }))
+        // EVERY file the pipeline writes, not merely the large ones.
+        //
+        // This list was `users`, `tracker`, `visited` — chosen by which files were big enough to bloat
+        // git. That is the wrong axis. The right one is *who writes it*, and by that test all nine are
+        // pipeline state: `Cleanup` rewrites `allowlist`, `updateUsers` rewrites `threshold`, OptIn and
+        // OptOut advance their own sync cursors, and **`OptOut` appends to `blocklist`**.
+        //
+        // The blocklist is why this matters beyond tidiness. A user opts out, `addToBlocklist` records
+        // it, the runner is discarded — and with the file outside the working set the decision never
+        // survives the run. The next Spider pass is free to re-index them, while the closing comment
+        // has already told them they were "removed from the active DevIndex databases and added to the
+        // blocklist". Losing that is a privacy failure, not a stale cache.
+        return ['users', 'tracker', 'visited', 'blocklist', 'allowlist', 'threshold', 'failed', 'optinSync', 'optoutSync']
+            .map(key => ({
+                key,
+                path: config.paths[key],
+                file: config.paths[key].slice(config.paths[key].lastIndexOf('/') + 1)
+            }))
     }
 
     /**

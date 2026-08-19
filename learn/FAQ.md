@@ -23,7 +23,7 @@ We provide the raw data, and we provide tools to view it differently. If you wan
 ### How can I update my data inside DevIndex?
 DevIndex mirrors your public GitHub data. To update your information (like your location, company, or hireable status) in DevIndex, you simply need to **update your GitHub profile**. 
 
-The DevIndex Data Factory runs hourly updater cycles (processing up to 800 users per cycle, including new candidates from the Spider). Once you update your GitHub profile, our systems will pick up the changes during your profile's next scheduled refresh and the grid will update automatically.
+The DevIndex Data Factory runs an updater cycle every two hours, taking up to 200 profiles per cycle including new candidates from the Spider — usually fewer, because it is the GitHub API budget rather than that ceiling which decides how many fit in a run. Once you update your GitHub profile, our systems will pick up the changes during your profile's next scheduled refresh and the grid will update automatically.
 
 ### Why am I not in the index?
 There are a few common reasons why a developer with a high contribution count might not appear in the DevIndex:

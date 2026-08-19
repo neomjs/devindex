@@ -19,12 +19,14 @@ For maximum anonymity and ease of use, you can opt out simply by temporarily sta
 
 ### How it works:
 1. **Star the Repository**: Navigate to [neomjs/devindex-opt-out](https://github.com/neomjs/devindex-opt-out) and click the "Star" button.
-2. **Automated Processing**: Our backend pipeline runs every hour. It queries the GraphQL API to find new stargazers on this repository.
+2. **Automated Processing**: Our backend pipeline runs every two hours. It queries the GraphQL API to find new stargazers on this repository.
 3. **Removal**: When our pipeline detects your star, it automatically:
     - Adds your GitHub username to our internal blocklist.
     - Removes your profile from our rich data store (`users.jsonl`).
     - Purges you from our discovery tracking files.
-4. **Un-star (Highly Encouraged)**: After an hour or two, you are free to un-star the repository. The removal is permanent, and you will not be re-indexed even if you remove the star.
+4. **Un-star (Highly Encouraged)**: Please leave the star in place until your removal has been processed — the pipeline reads the *current* list of stargazers, so removing the star before a run has seen it withdraws the request rather than completing it. Once you no longer appear in the index (allow a few hours), you are free to un-star. The removal is permanent, and you will not be re-indexed even if you remove the star.
+
+    If you would rather not depend on that timing at all, use the issue template below: it leaves a durable record that the pipeline picks up whenever it next runs, and it confirms the removal in writing.
 
 This approach is entirely automated, requires zero manual interaction with the maintainer, and keeps your public GitHub activity clean of administrative issues.
 
@@ -37,7 +39,7 @@ If you prefer to have a concrete, verifiable record that your opt-out request wa
 ### How it works:
 1. **Create an Issue**: Navigate to [neomjs/devindex-opt-out](https://github.com/neomjs/devindex-opt-out/issues/new/choose) and select the **"DevIndex Opt-Out Request"** template.
 2. **Confirm**: The template provides a simple checkbox acknowledging that you understand you will be removed from the DevIndex (with the option to opt back in later if desired). Submit the issue.
-3. **Automated Processing**: Our backend pipeline runs every hour and scans for open issues with the `devindex-opt-out` label. Because you must be logged into GitHub to create the issue, the pipeline automatically verifies your identity as the issue author.
+3. **Automated Processing**: Our backend pipeline runs every two hours and scans for open issues with the `devindex-opt-out` label. Because you must be logged into GitHub to create the issue, the pipeline automatically verifies your identity as the issue author.
 4. **Removal and Confirmation**: The pipeline automatically:
     - Adds your GitHub username to our internal blocklist.
     - Removes your profile from our rich data store (`users.jsonl`).

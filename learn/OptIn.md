@@ -12,12 +12,12 @@ The fastest and easiest way to opt yourself into the DevIndex is by temporarily 
 
 ### How it works:
 1. **Star the Repository**: Navigate to [neomjs/devindex-opt-in](https://github.com/neomjs/devindex-opt-in) and click the "Star" button.
-2. **Automated Processing**: Our backend pipeline runs every hour. It queries the GraphQL API to find new stargazers on this repository.
+2. **Automated Processing**: Our backend pipeline runs every two hours. It queries the GraphQL API to find new stargazers on this repository.
 3. **Queueing**: When our pipeline detects your star:
     - If you were previously on our blocklist (because you opted out), you are **removed from the blocklist**.
     - Your GitHub username is added to our tracking queue.
 4. **Evaluation**: The DevIndex Updater will evaluate your profile. If you meet the minimum total contribution threshold, you will be indexed and displayed. If you do not yet meet the bar, you will be removed from the queue, and you are welcome to star the repo again in the future when your contributions have grown.
-5. **Un-star (Highly Encouraged)**: After an hour or two, you are free to un-star the repository. The opt-in is permanent (unless you explicitly opt-out later).
+5. **Un-star (Highly Encouraged)**: Please leave the star in place until your opt-in has been processed — the pipeline reads the *current* list of stargazers, so removing the star before a run has seen it withdraws the request rather than completing it. Once you appear in the index (allow a few hours), you are free to un-star. The opt-in is permanent (unless you explicitly opt-out later).
 
 ---
 
@@ -28,7 +28,7 @@ If you prefer to have a concrete record of your request, or if you want to nomin
 ### How it works:
 1. **Create an Issue**: Navigate to [neomjs/devindex-opt-in](https://github.com/neomjs/devindex-opt-in/issues/new/choose) and select either the **"DevIndex Opt-In (Myself)"** or **"DevIndex Opt-In (Nominate Others)"** template.
 2. **Submit**: Fill out the requested information (like the GitHub usernames of your nominees).
-3. **Automated Processing**: Our backend pipeline runs every hour and scans for open issues with the `devindex-opt-in` label.
+3. **Automated Processing**: Our backend pipeline runs every two hours and scans for open issues with the `devindex-opt-in` label.
     - **For Self Requests**: Your identity is verified as the issue author. You are removed from the blocklist (if applicable) and added to the tracking queue.
     - **For Nominating Others**: The pipeline validates that the usernames exist on GitHub. It adds valid users to the tracking queue. **Crucially, it will NOT remove third-party nominees from the blocklist.** If a nominee previously opted out, your nomination is respectfully skipped to honor their privacy.
 4. **Confirmation**: The pipeline will leave an automated comment on your issue detailing exactly who was added to the queue, who failed validation (typos), and who was skipped (already opted out), before automatically closing the issue.

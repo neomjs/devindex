@@ -73,7 +73,7 @@ The service parses open issues tagged with the `devindex-opt-in` label. It disti
 
 ## Pipeline Integration
 
-The Opt-In service is executed automatically every hour via a GitHub Actions workflow (`.github/workflows/devindex-pipeline.yml`), integrated directly into the broader DevIndex discovery pipeline.
+The Opt-In service is executed automatically every two hours via a GitHub Actions workflow (`.github/workflows/data-sync-pipeline.yml`), integrated directly into the broader DevIndex discovery pipeline. That workflow file is the authority on the schedule; this page is not.
 
 ### Execution Order & Privacy
 
@@ -82,7 +82,7 @@ A critical design decision in the pipeline is the execution order:
 2.  **Opt-Out Service** runs immediately after.
 
 **Why this order matters:**
-If a user were to both "Star" the opt-in repository *and* the opt-out repository within the same hourly window, we must determine which intent takes precedence. 
+If a user were to both "Star" the opt-in repository *and* the opt-out repository within the same scheduling window, we must determine which intent takes precedence. 
 
 By running the Opt-Out service *last*, we guarantee that **privacy is always the default fallback**. If there are conflicting signals within the same hour, the final action taken by the pipeline will be to blocklist the user and purge their data. This ensures we never accidentally index someone who explicitly signaled their desire to be removed during that cycle.
 

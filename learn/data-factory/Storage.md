@@ -72,16 +72,23 @@ set**. Every run reads all three, mutates all three and writes all three; `Clean
 lot before every command. They are treated as one object with one lifecycle, and that has two
 consequences worth knowing before you touch this layer.
 
-**They are not in git, and must never be.** All three are regenerated in full every hour, so
-committing them makes each hour permanent. The same three files in `neomjs/neo` carry **40.06 GB**,
+**They are not in git, and must never be.** All three are regenerated in full on every run, so
+committing them makes each run permanent. The same three files in `neomjs/neo` carry **40.06 GB**,
 **3.76 GB** and **1.38 GB** of blob bytes respectively — and `tracker.json` has *more* commits behind
 it than the index does, despite being a tenth of the size. Judging these by their on-disk bytes rather
 than their commit rate is the mistake that lets the small ones through.
 
-So `.gitignore` excludes them and `npm run check-data-tracking` fails if any becomes tracked. The same
-guard asserts the *curated* files ARE tracked, because ignoring the directory wholesale would satisfy
-the first rule while silently discarding `blocklist.json` — somebody's opt-out decision, and the one
-file here nothing can regenerate.
+So `.gitignore` excludes the whole data directory and `npm run check-data-tracking` fails if anything
+under it becomes tracked.
+
+The guard used to carry a second assertion — that the *curated* files stay tracked — and that
+assertion was itself the bug. It split the directory by file size, when the question that matters is
+who WRITES a file. `blocklist.json` looked curated and is not: `OptOut` appends to it whenever
+somebody asks to be removed. Keeping it in git therefore protected an audit trail that was never
+being written, because a runner is discarded — the opt-out did not survive the run that honoured it,
+while the closing comment had already told the user it had. Every file here is pipeline state, so
+every file round-trips through the publication and the assertion is now total. The human interface
+for opt-in and opt-out is the ISSUE FLOW, not the file.
 
 **They are fetched as a set, and verified as a set.** `Storage.hydrateWorkingSet()` downloads all
 three from `config.publishedWorkingSet.baseUrl` once per process, before anything reads them, and
@@ -93,7 +100,7 @@ mismatch on any one rejects the whole set rather than mixing.
 
 It is a **manifest**, not provenance, and the distinction is deliberate. It began as a git-tracked
 anchor the artifacts could not influence — which is stronger, and which required committing it on
-every run. An hourly commit needs a write checkout, a push credential and an answer to "did the branch
+every run. A commit per run needs a write checkout, a push credential and an answer to "did the branch
 move": the entire publication state machine this migration exists to delete, for 355 bytes. So it
 ships *with* the set instead. It still catches a torn or partial publication, a file that failed to
 propagate, and any mixing of generations — the failures that actually happen. It cannot catch a

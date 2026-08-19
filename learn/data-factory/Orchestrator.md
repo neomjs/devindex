@@ -135,7 +135,7 @@ the default dispatch stays a side-effect-free probe of both credential paths.
     Auth is **keyless**: Workload Identity Federation exchanges the runner's OIDC token for a
     short-lived credential, so no Google secret is stored in this repository — consistent with the
     GitHub App token, which is also minted per run rather than stored. The identity is dedicated to
-    this job and scoped to object writes on one prefix; an hourly data job has no business holding
+    this job and scoped to object writes on one prefix; a scheduled data job has no business holding
     more. Bindings are per-repository, so this repository needs its own.
 
     `buildScripts/setup-gcp-publish.sh` does the whole thing, once, and is idempotent. It reuses the

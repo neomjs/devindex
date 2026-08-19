@@ -28,7 +28,7 @@ flowchart TD
 ```
 
 ### 1. The Orchestrator
-Everything begins with the **[Orchestrator](#/learn/data-factory/Orchestrator)**. It manages the CLI (`cli.mjs`), the command router (`Manager.mjs`), and the hourly GitHub Actions pipeline. The Orchestrator ensures that services run in a privacy-first, atomic sequence (e.g., processing Opt-Outs before discovering new users).
+Everything begins with the **[Orchestrator](#/learn/data-factory/Orchestrator)**. It manages the CLI (`cli.mjs`), the command router (`Manager.mjs`), and the scheduled GitHub Actions pipeline. The Orchestrator ensures that services run in a privacy-first, atomic sequence (e.g., processing Opt-Outs before discovering new users).
 
 ### 2. Privacy & Control (Opt-In / Opt-Out)
 Before any discovery happens, the pipeline processes user agency requests via the **[Opt-In](#/learn/data-factory/OptIn)** and **[Opt-Out](#/learn/data-factory/OptOut)** services. These automated, secure endpoints allow developers to explicitly control their presence in the index, reversing or enforcing blocklists immediately.

@@ -217,6 +217,29 @@ jobs:
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
 
+      # Masking covers a secret's EXACT string and every superstring of it — never a substring. The
+      # stored secret is the full destination, so a log line quoting the whole path is masked, while
+      # one quoting only the bucket NAME is not. `gcloud` errors do exactly that: "bucket <name> not
+      # found" names the bucket alone.
+      #
+      # So the shortest sensitive token gets registered too, derived from the secret rather than
+      # stored a second time — one secret remains the single source, and nothing here hardcodes a
+      # component of it. `add-mask` consumes its argument as a workflow command; the value is not
+      # emitted, and everything after this step has both forms redacted.
+      - name: Mask the destination's components
+        env:
+          DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
+        run: |
+          set -euo pipefail
+          NAME="${DEVINDEX_PUBLISH_BUCKET#gs://}"
+          NAME="${NAME%%/*}"
+          if [ -z "${NAME}" ]; then
+            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set, or is not a gs:// URL. It must be a repository SECRET."
+            exit 1
+          fi
+          echo "::add-mask::${NAME}"
+          echo "Destination components registered for masking."
+
       # Read-only, and it proves the part a credential check usually misses: not merely that the token
       # minted, but that this identity can actually SEE the destination. A `storage.objectAdmin`
       # binding on the wrong bucket authenticates perfectly and fails at the first write.

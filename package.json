@@ -4,6 +4,7 @@
     "private": true,
     "type": "module",
     "scripts": {
+        "postinstall"                          : "node ./buildScripts/linkMarkedForWorkerScope.mjs",
         "add-config"                           : "node ./node_modules/neo.mjs/buildScripts/create/addConfig.mjs",
         "build-all"                            : "node ./node_modules/neo.mjs/buildScripts/build/all.mjs -f -n",
         "build-all-questions"                  : "node ./node_modules/neo.mjs/buildScripts/build/all.mjs -f",

@@ -438,8 +438,7 @@ class Storage extends Base {
         // Written only after EVERY member fetched and verified, so a failure part-way through leaves
         // the local set exactly as it was rather than half-replaced.
         for (const {text, localPath} of Object.values(fetched)) {
-            await fs.writeFile(`${localPath}.tmp`, text, 'utf-8');
-            await fs.rename(`${localPath}.tmp`, localPath);
+            await this.writeAtomic(localPath, text);
         }
 
         console.log(`[Storage] Adopted the published working set (${members.length} files).`)
@@ -527,9 +526,15 @@ class Storage extends Base {
         // an index of 200 and 49,800 contributors would be gone with every log line green. That was
         // survivable while the checkout carried a committed copy; removing the file from git removed
         // that net.
+        // EMPTY counts as absent, and the distinction is not academic: `ensureFiles` creates
+        // `users.jsonl` as a zero-byte file at construction, long before anything tries to read it,
+        // and `readJson` answers an empty JSONL with `[]` — which is TRUTHY. So on a fresh checkout
+        // whose hydration then failed, `if (users)` would hand back the empty file and the guard
+        // below would never fire, in precisely the case it was written for. A genuinely first-ever
+        // run is the one legitimate empty index, and it has its own door: DEVINDEX_ALLOW_EMPTY_INDEX.
         const users = await this.readJson(config.paths.users, null);
 
-        if (users) return users;
+        if (users?.length) return users;
 
         if (process.env.DEVINDEX_ALLOW_EMPTY_INDEX) {
             console.warn('[Storage] No published and no local index — proceeding EMPTY because DEVINDEX_ALLOW_EMPTY_INDEX is set. This publishes whatever this run produces as the entire index.');
@@ -694,6 +699,38 @@ class Storage extends Base {
     }
 
     /**
+     * @summary Writes a file through a temp-and-rename, creating the data directory when it is absent.
+     *
+     * **The `mkdir` is the load-bearing part, and it is needed because git cannot express an empty
+     * directory.** While the working set was committed, `apps/devindex/resources/data/` existed on
+     * every checkout as a side effect of the files inside it. Untracking them removed the directory
+     * along with them, so the first scheduled run on that tree died in `ensureFiles` with `ENOENT`
+     * on `users.jsonl.tmp` — before a single collection stage ran. Measured 2026-08-19 on run
+     * 32276538403; the full run that had "verified" this path two hours earlier ran the previous
+     * tree, where seven files still held the directory open.
+     *
+     * The guarantee sits at the WRITE rather than in `initAsync`, because the failure was a writer
+     * running where the directory did not exist — and an init hook is something a later caller can
+     * bypass, while this is not. Both writers in this class shared the idiom, so they now share
+     * the fix rather than each carrying its own copy to forget.
+     *
+     * Temp-and-rename is what makes the write atomic for a concurrent reader: `users.jsonl` is
+     * ~23 MiB, and a torn write parses as far as its last complete line — presenting as missing
+     * contributors rather than as a failed write.
+     * @param {String} filePath
+     * @param {String} content
+     * @returns {Promise<void>}
+     * @private
+     */
+    async writeAtomic(filePath, content) {
+        const tempPath = `${filePath}.tmp`;
+
+        await fs.mkdir(filePath.slice(0, filePath.lastIndexOf('/')), {recursive: true});
+        await fs.writeFile(tempPath, content, 'utf-8');
+        await fs.rename(tempPath, filePath)
+    }
+
+    /**
      * Writes data to a JSON or JSONL file.
      * @param {String} path
      * @param {*} data
@@ -717,9 +754,7 @@ class Storage extends Base {
             content = JSON.stringify(data, null, 2);
         }
 
-        const tempPath = `${path}.tmp`;
-        await fs.writeFile(tempPath, content, 'utf-8');
-        await fs.rename(tempPath, path);
+        await this.writeAtomic(path, content);
 
         // Recorded here rather than at each call site: the index is written from three places
         // (`saveUsers`, the prune path, and Cleanup's reconciliation), and provenance that only some

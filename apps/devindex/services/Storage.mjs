@@ -711,19 +711,12 @@ class Storage extends Base {
     /**
      * @summary Writes a file through a temp-and-rename, creating the data directory when it is absent.
      *
-     * **The `mkdir` is load-bearing, because git cannot express an empty directory.** While the
-     * working set was committed, `apps/devindex/resources/data/` existed on every checkout as a side
-     * effect of the files inside it. Now that the set is delivered rather than versioned, a clean
-     * checkout has no such directory at all — and `ensureFiles()` runs before anything has fetched
-     * one, so the first write on a fresh machine is also the write that must create it.
+     * The `mkdir` is load-bearing: git cannot express an empty directory, so a clean checkout has no
+     * data directory at all and `ensureFiles()` runs before anything has fetched one. It sits at the
+     * write rather than in `initAsync`, so no other path to a writer can bypass it.
      *
-     * The guarantee sits at the WRITE rather than in `initAsync`, so that reaching a writer by any
-     * other path cannot bypass it. Both writers in this class shared the temp-and-rename idiom, so
-     * they now share one implementation of it.
-     *
-     * Temp-and-rename is what makes the write atomic for a concurrent reader: `users.jsonl` is
-     * ~23 MiB, and a torn write parses as far as its last complete line — presenting as missing
-     * contributors rather than as a failed write.
+     * Temp-and-rename keeps the write atomic for a concurrent reader: `users.jsonl` is ~23 MiB, and a
+     * torn write parses as far as its last complete line, presenting as missing contributors.
      * @param {String} filePath
      * @param {String} content
      * @returns {Promise<void>}

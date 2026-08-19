@@ -115,12 +115,6 @@ by naming them explicitly.
     [Storage](./Storage.md#the-working-set-derived-delivered-never-versioned) — this is the single most
     important invariant in the pipeline, and the reason `neomjs/neo`'s `.git` is 5.2 GB.
 
-    ⚠️ **The round trip does not close yet.** `config.publishedWorkingSet.baseUrl` still resolves to
-    `neomjs/neo`'s `pages` copy while the publish step writes to the content-plane prefix, so a run
-    reads one artifact and writes another and its decisions do not carry into the next run — which is
-    why `optin-sync.json` still reads its March value. Tracked in neomjs/neo#17394; read that before
-    changing anything on this path.
-
 ### Cadence
 
 **Every two hours.** Each run is bounded by the GraphQL window rather than by `--limit 200`: a

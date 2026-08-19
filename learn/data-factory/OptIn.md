@@ -73,7 +73,7 @@ The service parses open issues tagged with the `devindex-opt-in` label. It disti
 
 ## Pipeline Integration
 
-The Opt-In service is executed automatically every two hours via a GitHub Actions workflow (`.github/workflows/data-sync-pipeline.yml`), integrated directly into the broader DevIndex discovery pipeline. That workflow file is the authority on the schedule; this page is not.
+The Opt-In service is executed automatically every two hours via a GitHub Actions workflow (`.github/workflows/data-sync-pipeline.yml`), integrated directly into the broader DevIndex discovery pipeline.
 
 ### Execution Order & Privacy
 

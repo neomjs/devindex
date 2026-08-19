@@ -1,35 +1,10 @@
 name: DevIndex Data Sync
 
-# The four collection stages, moved out of `neomjs/neo` per neomjs/neo#17375.
+# The four collection stages, plus publication of the working set.
 #
-# ## Cadence: every two hours, and it is a throughput decision
-#
-# Each run is bounded by the GraphQL window, not by `--limit 200`: a 5,000-point budget against a
-# 32-point per-user reservation, less a 100-point downstream reserve, admits ~153 users. So the
-# schedule is the only lever on throughput, and it sets how stale the tail of the index gets —
-# ~1,836 users/day here, a full sweep of 50,000 in roughly 27 days.
-#
-# Hourly would halve that to ~14 days. Two hours is the operator's call on a corpus whose churn is low
-# at this size; if the tail proves too stale, the cheaper fix is measuring real `observedCost` against
-# the 32-point reservation rather than doubling the run count.
-#
-# `workflow_dispatch` stays, and with `run_collection` defaulting FALSE it remains a side-effect-free
-# probe of both credential paths.
-#
-# ## What is deliberately NOT here: `publishGeneratedProgressOnFailure`
-#
-# Every DevIndex stage in neo's `buildScripts/dataSyncPipeline.mjs` carries
-# `publishGeneratedProgressOnFailure: true` plus a `deferredError` rethrow. That machinery exists for
-# one reason, recorded in its own comment there: DevIndex enrichment shared a process with neo's
-# corpus publication, so a denial on the first DevIndex stage threw out of the loop, `content indexes
-# and SEO` never ran, and neo's corpus was discarded unpublished — freezing `resources/content/**`
-# on `dev` for nineteen hours.
-#
-# Splitting the process removes the coupling that machinery protected against. There is no shared
-# corpus publication here for a DevIndex failure to abort, so a failing stage should fail the job
-# plainly. Porting the flag would carry a workaround into a repository whose structure already makes
-# the problem unreachable — and it would read, to the next person, as though the hazard still exists.
-# It is absent on purpose. (neomjs/neo#17375 AC-4.)
+# Cadence is the only lever on throughput: each run is bounded by the GraphQL window rather than by
+# `--limit 200`, admitting roughly 153 users, so the schedule sets how stale the tail of the index
+# gets — about 1,836 users/day here, a full sweep of 50,000 in roughly 27 days.
 
 on:
   schedule:
@@ -38,13 +13,11 @@ on:
   workflow_dispatch:
     inputs:
       run_collection:
-        # Default FALSE, so the ordinary DISPATCH is a credential probe with no side effects — the
-        # mutating stages are exactly the ones you cannot safely repeat while fixing an installation,
-        # which is when you most need to check whether the credential works.
+        # Default FALSE, so an ordinary dispatch is a credential probe with no side effects — the
+        # mutating stages are exactly the ones you cannot safely repeat while fixing an installation.
         #
         # A SCHEDULED run always collects. `inputs` does not exist on a schedule event, so gating the
-        # stages on `inputs.run_collection` alone would skip every one of them and the pipeline would
-        # do nothing every two hours while reporting success.
+        # stages on `inputs.run_collection` alone would skip every one of them while reporting success.
         description: 'Run the collection stages. Leave off to probe credentials only.'
         type: boolean
         default: false
@@ -58,45 +31,24 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      # `contents: read`, and that is the whole point of neomjs/neo#17375: the derived files are
-      # published as objects, never committed, so this job needs no write anywhere in git. The Intake
-      # identity below is installed on the opt-in/opt-out repositories, never on this one.
+      # The derived files are published as objects and never committed, so this job needs no git write.
       contents: read
-      # Required for Workload Identity Federation: the runner mints an OIDC token that GCP exchanges
-      # for a short-lived access token. This is what lets the publish step hold NO stored Google
-      # credential — see the auth step.
+      # Workload Identity Federation: the runner mints an OIDC token that GCP exchanges for a
+      # short-lived access token, which is why no Google credential is stored here.
       id-token: write
 
     steps:
-      # The Intake App is installed on the DevIndex intake repositories, NOT on this one, so the
-      # installation must be named explicitly.
+      # The Intake App is installed on the two intake repositories, not on this one, so they are named.
       #
-      # `permission-contents: write` is for the STARGAZER READ, not to write anything. GitHub limited
-      # the stargazers endpoint to repository admins and collaborators (2026-06-30) and infers that
-      # status from contents-write; `metadata: read` no longer carries it. That was measured in neo
-      # across four probes — `issues:write + metadata:read` denied, `+ administration:read` denied,
-      # `+ contents:read` denied, `+ contents:write` reachable — so there is no lesser lever. Carried
-      # here with the cost stated rather than buried: this token CAN write code to the two intake
-      # repositories, and its narrowness now rests on the App's installation scope rather than on the
-      # grant itself.
+      # `permission-contents: write` is for the STARGAZER READ, not to write anything: GitHub limits
+      # that endpoint to admins and collaborators and infers the status from contents-write, and
+      # `metadata: read` no longer carries it. There is no lesser lever, so the cost is stated rather
+      # than buried — this token can write code to both intake repositories, and its narrowness rests
+      # on the App's installation scope.
       #
-      # NOT `continue-on-error` here, unlike neo. There it was non-fatal because neo's corpus emission
-      # ran under a different identity and had no reason to die with an enrichment credential. In this
-      # repository every stage needs this token, so a failed mint means there is no work to do — and a
-      # green run that collected nothing is the failure mode this whole ticket is about.
-      #
-      # THREE measured failure modes, and they point at different things — read the message, not the
-      # step name, because all three surface as a red mint:
-      #
-      #   "'Issuer' claim ('iss') must be an Integer"       -> APP ID is not a bare integer.
-      #        Measured here 2026-08-19, run 32252194883: the Client ID had been stored instead of the
-      #        App ID. They sit adjacent on the App settings page and the Client ID begins `Iv`. This
-      #        one fails while BUILDING the JWT, so it says nothing about the key or the installation
-      #        — the private key is not implicated and should not be rotated chasing it.
-      #   "Not Found"                                        -> a named repository has no installation.
-      #   "The permissions requested are not granted..."     -> the grant is missing on the App.
-      #
-      # The last two are neo's, recorded on runs 31879164402 and 31877595849 respectively.
+      # Read the message, not the step name, when this fails: an `iss` claim error means the App ID is
+      # not a bare integer (a Client ID stored by mistake), `Not Found` means a named repository has no
+      # installation, and a permissions error means the grant is missing on the App.
       - name: Mint Intake installation token
         id: intake-token
         uses: actions/create-github-app-token@v3
@@ -111,18 +63,13 @@ jobs:
           permission-issues: write
           permission-metadata: read
 
-      # `fetch-depth: 1`, and it is a decision rather than a default restated. Nothing in this job
-      # pushes, resets to a remote head, or compares SHAs for ancestry, so no history is required.
-      # neo's equivalent step sets `fetch-depth: 0` and that depth exists for its publish push, which
-      # this workflow does not have.
+      # Nothing here pushes or compares SHAs, so no history is needed.
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
-      # Matches the version neo's pipeline runs these same stages on today. Pinned to that rather
-      # than to a repository declaration, because this repository declares no `engines` — so the
-      # only evidence about what these services are known to run under is neo's workflow.
+      # This repository declares no `engines`; 24 is the version these services are known to run under.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -131,9 +78,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Probes reachability of both intake repositories and stops. Safe to repeat as often as an
-      # installation needs correcting, which is the property that makes it worth having: the stages
-      # that would otherwise serve as the check are the ones that mutate.
+      # Safe to repeat while an installation is being corrected, unlike the stages that would
+      # otherwise serve as the check.
       - name: Probe intake access
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
@@ -143,16 +89,13 @@ jobs:
             gh api "repos/neomjs/$repo" --jq '"reachable: \(.full_name)"'
           done
 
-      # Named for what it does, not what it sounds like: this step does NOT exit the job. Every stage
-      # below is independently gated on `run_collection`, and that gating is what ends the run. A step
-      # called "Exit after probe" would describe a driver that does not exist.
       - name: Report probe-only run
         if: ${{ github.event_name != 'schedule' && !inputs.run_collection }}
         run: echo "run_collection was not set — credential probe only, no collection performed."
 
-      # Privacy first, and the ORDER is the guarantee rather than a preference: opt-in and opt-out are
-      # processed BEFORE discovery or enrichment, so a user who asked to be removed cannot be indexed
-      # by the Spider in the same run that honoured their request.
+      # The ORDER is a privacy guarantee: opt-in and opt-out are processed before discovery and
+      # enrichment, so somebody who asked to be removed cannot be indexed by the Spider in the same
+      # run that honoured the request.
       - name: DevIndex Opt-In
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
@@ -171,41 +114,21 @@ jobs:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:spider -- --strategy random
 
-      # The 200-candidate argument is a rollout CEILING, not a promise: the Updater applies GraphQL
-      # cost admission and may process fewer.
+      # The 200-candidate argument is a ceiling, not a promise: GraphQL cost admission may allow fewer.
       - name: DevIndex Updater
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
           GH_TOKEN: ${{ steps.intake-token.outputs.token }}
         run: npm run devindex:update
 
-      # The working set round-trips through the PUBLICATION, not through git and not through an
-      # Actions artifact. `hydrateWorkingSet` fetched it at the start of this run; this puts it back.
-      # That is why there is no upload-artifact step here any more: one mechanism for four files with
-      # one lifecycle, rather than two mechanisms and two failure modes.
+      # Keyless, and NOT gated on `run_collection`: a probe that cannot exercise the publish credential
+      # checks only half the pipeline, and WIF authentication has no side effects.
       #
-      # KEYLESS. Workload Identity Federation exchanges the runner's OIDC token for a short-lived
-      # credential, so no Google secret is stored in this repository at all — which keeps this step
-      # consistent with the GitHub App token above, minted fresh every run rather than stored.
-      #
-      # The identity is dedicated to this job and scoped to object writes on one prefix. An hourly
-      # data job should not be able to do anything else, so it does not reuse a broader one.
-      # Deliberately NOT gated on `run_collection`: a probe that cannot test the publish credential
-      # only checks half the pipeline, and the half it skips is the one that was just configured. WIF
-      # authentication has no side effects — it exchanges an OIDC token — so there is no cost to
-      # exercising it on every dispatch.
-      # `export_environment_variables: false` is a CONFIDENTIALITY setting, not a tuning knob.
-      #
-      # By default this action exports `CLOUDSDK_PROJECT`, `CLOUDSDK_CORE_PROJECT`, `GCP_PROJECT`,
-      # `GCLOUD_PROJECT` and `GOOGLE_CLOUD_PROJECT` into the job environment. It derives them from
-      # the provider and service account — which ARE secrets and are masked — and then re-emits the
-      # project id as a plain variable. GitHub prints the environment block of every `run` step, and
-      # this repository is public, so the project id was appearing unmasked in world-readable logs
-      # once per step. Masking applies to secret VALUES, not to values derived from them.
-      #
-      # Turning the export off also withholds the credentials path, so the steps below would lose
-      # authentication. `credentials_file_path` is passed to them explicitly instead. The path is a
-      # temp filename and carries nothing.
+      # `export_environment_variables: false` is a confidentiality setting. The action otherwise exports
+      # `CLOUDSDK_PROJECT` and its siblings, deriving them from masked secrets and re-emitting the
+      # project id as a plain variable — and GitHub prints every step's environment block, in a public
+      # repository. Turning the export off also withholds the credentials path, so it is passed to the
+      # gcloud steps explicitly.
       - name: Authenticate to Google Cloud
         id: auth
         uses: google-github-actions/auth@v3
@@ -217,15 +140,9 @@ jobs:
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
 
-      # Masking covers a secret's EXACT string and every superstring of it — never a substring. The
-      # stored secret is the full destination, so a log line quoting the whole path is masked, while
-      # one quoting only the bucket NAME is not. `gcloud` errors do exactly that: "bucket <name> not
-      # found" names the bucket alone.
-      #
-      # So the shortest sensitive token gets registered too, derived from the secret rather than
-      # stored a second time — one secret remains the single source, and nothing here hardcodes a
-      # component of it. `add-mask` consumes its argument as a workflow command; the value is not
-      # emitted, and everything after this step has both forms redacted.
+      # Masking covers a secret's exact string and any superstring, never a substring. The secret holds
+      # the full destination, so a log line naming only the bucket would print in full — which is what
+      # `gcloud` errors do. The name is derived here rather than stored twice, keeping one source.
       - name: Mask the destination's components
         env:
           DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
@@ -240,56 +157,40 @@ jobs:
           echo "::add-mask::${NAME}"
           echo "Destination components registered for masking."
 
-      # Read-only, and it proves the part a credential check usually misses: not merely that the token
-      # minted, but that this identity can actually SEE the destination. A `storage.objectAdmin`
-      # binding on the wrong bucket authenticates perfectly and fails at the first write.
+      # Proves what a credential check usually misses: not that the token minted, but that this
+      # identity can see the destination. A binding on the wrong bucket authenticates perfectly and
+      # fails at the first write.
       - name: Probe publish access
         env:
-          # A SECRET, not a variable. Repository variables are printed verbatim in the environment
-          # block of every `run` step, and this repository is public — so as a variable the
-          # destination was published to world-readable logs on every run. As a secret GitHub masks
-          # it as `***` everywhere it appears, including inside `gcloud` output.
-          #
-          # The cost is real and accepted: masking hides the destination in exactly the output you
-          # read when a publish goes wrong. Debuggability does not outrank the confidentiality
-          # ruling that put these identifiers in a secret store in the first place, and the error
-          # paths below are written to stay diagnostic without echoing the value.
+          # A SECRET, not a variable: variables are printed verbatim in every step's environment block,
+          # and this repository is public. Masking costs readability exactly when a publish fails, and
+          # that cost is accepted.
           DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
           CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ${{ steps.auth.outputs.credentials_file_path }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}
         run: |
           set -euo pipefail
           if [ -z "${DEVINDEX_PUBLISH_BUCKET}" ]; then
-            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set. Add it as a repository SECRET (not a variable — a variable is printed unmasked in this public repository's logs)."
+            echo "::error::DEVINDEX_PUBLISH_BUCKET is not set. Add it as a repository SECRET (a variable is printed unmasked in this public repository's logs)."
             exit 1
           fi
-          # The two failures here point at DIFFERENT things and an `|| echo "check the binding"`
-          # blames the wrong one: a 403 on `iam.serviceAccounts.getAccessToken` is IMPERSONATION
-          # being refused — usually IAM propagation, which can take minutes after a binding is
-          # created — while a 403 on `storage.objects.list` is the bucket grant. The first resolves
-          # itself; the second never will. So the output is captured and classified.
-          #
-          # It is classified but NOT echoed, and that is the same rule as the secret above rather
-          # than caution for its own sake. GitHub masks the secret's exact value; it does not mask
-          # strings DERIVED from it, and `gcloud`'s errors quote the path in forms that do not match
-          # verbatim — a parent prefix, a URL-encoded variant. Echoing the raw error would publish
-          # what the secret exists to withhold. For the same reason this lists the full prefix rather
-          # than a `%/*`-truncated parent, so the value that reaches the log matches the secret and
-          # is masked.
+          # The two failures mean different things: a 403 on `getAccessToken` is impersonation being
+          # refused, usually IAM propagation, while a 403 on `storage.objects.list` is the bucket grant.
+          # The first resolves itself; the second never will. The raw error is classified but not
+          # echoed, since gcloud quotes the path in forms that do not match the secret verbatim.
           if OUT=$(gcloud storage ls "${DEVINDEX_PUBLISH_BUCKET}/" 2>&1); then
             echo "Publish identity can read the destination."
           elif echo "$OUT" | grep -q "impersonated credentials\|getAccessToken"; then
-            echo "::error::Impersonation refused. If the WIF binding was just created, wait a few minutes and re-run — IAM propagation. If it persists, the binding or the provider condition is wrong. Re-run with debug logging to see the raw error."
+            echo "::error::Impersonation refused. If the binding was just created, wait a few minutes and re-run. If it persists, the binding or the provider condition is wrong. Re-run with debug logging for the raw error."
             exit 1
           else
-            echo "::error::Authenticated, but cannot list the destination — this is the bucket grant, not the identity. Re-run with debug logging to see the raw error."
+            echo "::error::Authenticated, but cannot list the destination — the bucket grant, not the identity. Re-run with debug logging for the raw error."
             exit 1
           fi
 
       - name: Publish the working set
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
-          # Secret, for the reason given on the probe step above.
           DEVINDEX_PUBLISH_BUCKET: ${{ secrets.DEVINDEX_PUBLISH_BUCKET }}
           CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: ${{ steps.auth.outputs.credentials_file_path }}
           GOOGLE_APPLICATION_CREDENTIALS: ${{ steps.auth.outputs.credentials_file_path }}

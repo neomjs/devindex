@@ -78,24 +78,9 @@ committing them makes each run permanent. The same three files in `neomjs/neo` c
 it than the index does, despite being a tenth of the size. Judging these by their on-disk bytes rather
 than their commit rate is the mistake that lets the small ones through.
 
-So `.gitignore` excludes the whole data directory and `npm run check-data-tracking` fails if anything
-under it becomes tracked.
-
-The assertion is **total** — the whole directory, not a list of names — because the question that
-decides membership is who *writes* a file, not how large it is. `blocklist.json` is the instructive
-case: it looks like configuration, but `OptOut` appends to it, which makes it pipeline state like
-everything else here. So every file in the directory is published as part of the set and round-trips
-through the publication rather than through git, and the durable human interface for opt-in and
-opt-out is the **issue flow**.
-
-A list-based guard would also miss the case a total one covers for free: a new file added to this
-directory and committed, which is on neither list.
-
-**Publishing is not yet the same thing as round-tripping**, and the difference currently matters:
-`baseUrl` below still points at `neomjs/neo`'s `pages` copy rather than at what this pipeline
-publishes, so a run reads one artifact and writes another. Anything a run decides about these files —
-a new blocklist entry, an advanced sync cursor — is published where nothing reads it and is gone by
-the next run. neomjs/neo#17394 carries the fix and the reason it is more than untidiness.
+So `.gitignore` excludes the whole directory and `npm run check-data-tracking` fails if anything under
+it becomes tracked. Every file there is written by the pipeline — including `blocklist.json`, which
+`OptOut` appends to — so all of them travel with the published set rather than through git.
 
 **They are fetched as a set, and verified as a set.** `Storage.hydrateWorkingSet()` downloads all
 three from `config.publishedWorkingSet.baseUrl` once per process, before anything reads them, and

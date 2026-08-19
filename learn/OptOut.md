@@ -26,7 +26,7 @@ For maximum anonymity and ease of use, you can opt out simply by temporarily sta
     - Purges you from our discovery tracking files.
 4. **Un-star (Highly Encouraged)**: Please leave the star in place until your removal has been processed — the pipeline reads the *current* list of stargazers, so removing the star before a run has seen it withdraws the request rather than completing it. Once you no longer appear in the index (allow a few hours), you are free to un-star. The removal is permanent, and you will not be re-indexed even if you remove the star.
 
-    If you would rather not depend on that timing at all, use the issue template below: it leaves a durable record that the pipeline picks up whenever it next runs, and it confirms the removal in writing.
+    If you would rather not depend on that timing, use the issue template below instead: it leaves a durable record and confirms the removal in writing.
 
 This approach is entirely automated, requires zero manual interaction with the maintainer, and keeps your public GitHub activity clean of administrative issues.
 

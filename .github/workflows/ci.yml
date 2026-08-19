@@ -1,9 +1,7 @@
 name: CI
 
-# Runs the unit suite and the data-tracking guard on every push to `main` and every pull request.
-#
-# Both are fast and neither needs a credential, so this workflow stays a plain read-only check — the
-# repository's other workflow, `data-sync-pipeline.yml`, is the one that holds tokens and publishes.
+# Runs the data-tracking guard and the unit suite on every push to `main` and every pull request.
+# Read-only: it builds nothing, publishes nothing and uses no credential.
 
 on:
   push:
@@ -19,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      # Read-only by construction: this job builds nothing, publishes nothing and touches no credential.
       contents: read
 
     steps:
@@ -28,45 +25,30 @@ jobs:
         with:
           fetch-depth: 1
 
-      # Matches `data-sync-pipeline.yml`. This repository declares no `engines`, so the pipeline's pin
-      # is the best available evidence of what these services run under, and CI disagreeing with the
-      # runtime that actually executes them would make a green here mean less than it looks.
+      # Matches the pipeline workflow; this repository declares no `engines`.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '24'
 
-      # No `playwright install`. The unit config declares no `webServer` and launches no browser —
-      # these are pure-Node specs driven by the Playwright runner, so downloading Chromium would cost
-      # a minute per run to exercise nothing.
+      # No `playwright install`: the unit config declares no `webServer` and launches no browser.
       - name: Install dependencies
         run: npm ci
 
-      # Runs before the suite because it is the cheaper assertion: the derived working set is
-      # delivered rather than versioned, and this confirms none of it has become tracked.
       - name: Assert no derived data is tracked
         run: npm run check-data-tracking
 
-      # `--project=unit` excludes `unit-profiling`, and both halves are deliberate.
+      # `--project=unit` excludes `unit-profiling`. Those two specs read the real `users.jsonl`, which
+      # is gitignored and whose fetch skips under CI, and they assert wall-clock budgets that a shared
+      # runner can double — a regression report for something that did not regress.
       #
-      # The two profiling specs read the real `users.jsonl`, which is gitignored and whose
-      # `postinstall` fetch skips when CI is set, so they would need a ~10 MB download per run. They
-      # also assert wall-clock budgets, and the unit config records that a shared, contended CPU can
-      # double the store-filter measurement — which would surface as a product regression that does
-      # not exist. They are machine-local profiling tools rather than correctness tests.
+      # `--fail-on-flaky-tests` matters because the config retries twice under CI and a Playwright
+      # retry runs in a fresh worker, so leaked state repairs itself and the run reports green.
       #
-      # `--fail-on-flaky-tests` matters because the config sets `retries: 2` under CI, and a Playwright
-      # retry runs in a FRESH worker. Any state leaked between specs is therefore repaired by the retry
-      # itself, and the run would report flaky-but-passed — green, for a suite that is not isolated.
-      # This flag is what keeps that visible.
-      #
-      # Expect 47 tests. A project name matching nothing exits 0 with "0 passed", so a sudden drop in
-      # that number indicates a selector problem rather than a smaller suite.
+      # Expect 47 tests; a project name matching nothing also exits 0.
       - name: Unit tests
         run: npx playwright test -c test/playwright/playwright.config.unit.mjs --project=unit --fail-on-flaky-tests
 
-      # `if: failure()` rather than `always()`: on a green run nobody opens it, and the report's traces
-      # only carry information once something has gone wrong.
       - name: Upload test report
         if: failure()
         uses: actions/upload-artifact@v4

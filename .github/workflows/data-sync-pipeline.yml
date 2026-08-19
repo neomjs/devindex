@@ -1,0 +1,178 @@
+name: DevIndex Data Sync
+
+# The four collection stages, moved out of `neomjs/neo` per neomjs/neo#17375.
+#
+# ## Why this workflow has NO `schedule:` yet, and must not get one
+#
+# The publish step does not exist (see `Publish the derived artifacts` below), and these stages have
+# real side effects: `devindex:optout` COMMENTS ON AND CLOSES issues in `devindex-opt-out`, and the
+# Spider and Updater spend GitHub API quota. An hourly run without a publish destination would
+# therefore mutate other people's repositories and burn quota to produce output that is discarded at
+# the end of the job. That is strictly worse than not running.
+#
+# So: `workflow_dispatch` only, and collection is opt-in per run. Adding `schedule:` is the LAST step
+# of neomjs/neo#17375, not an oversight — it lands with the publish destination and not before.
+#
+# ## What is deliberately NOT here: `publishGeneratedProgressOnFailure`
+#
+# Every DevIndex stage in neo's `buildScripts/dataSyncPipeline.mjs` carries
+# `publishGeneratedProgressOnFailure: true` plus a `deferredError` rethrow. That machinery exists for
+# one reason, recorded in its own comment there: DevIndex enrichment shared a process with neo's
+# corpus publication, so a denial on the first DevIndex stage threw out of the loop, `content indexes
+# and SEO` never ran, and neo's corpus was discarded unpublished — freezing `resources/content/**`
+# on `dev` for nineteen hours.
+#
+# Splitting the process removes the coupling that machinery protected against. There is no shared
+# corpus publication here for a DevIndex failure to abort, so a failing stage should fail the job
+# plainly. Porting the flag would carry a workaround into a repository whose structure already makes
+# the problem unreachable — and it would read, to the next person, as though the hazard still exists.
+# It is absent on purpose. (neomjs/neo#17375 AC-4.)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_collection:
+        # Default FALSE, so the ordinary dispatch is a credential probe with no side effects. The
+        # mutating stages are exactly the ones you cannot safely repeat while fixing an installation,
+        # which is when you most need to check whether the credential works.
+        description: 'Run the collection stages. Leave off to probe credentials only.'
+        type: boolean
+        default: false
+
+concurrency:
+  group: devindex-data-sync
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+
+    permissions:
+      # `contents: read` and nothing else. This workflow does not push: the derived artifacts are
+      # published as an artifact rather than committed, which is the entire point of neomjs/neo#17375.
+      # The Intake identity below is installed on the opt-in/opt-out repositories, never on this one.
+      contents: read
+
+    steps:
+      # The Intake App is installed on the DevIndex intake repositories, NOT on this one, so the
+      # installation must be named explicitly.
+      #
+      # `permission-contents: write` is for the STARGAZER READ, not to write anything. GitHub limited
+      # the stargazers endpoint to repository admins and collaborators (2026-06-30) and infers that
+      # status from contents-write; `metadata: read` no longer carries it. That was measured in neo
+      # across four probes — `issues:write + metadata:read` denied, `+ administration:read` denied,
+      # `+ contents:read` denied, `+ contents:write` reachable — so there is no lesser lever. Carried
+      # here with the cost stated rather than buried: this token CAN write code to the two intake
+      # repositories, and its narrowness now rests on the App's installation scope rather than on the
+      # grant itself.
+      #
+      # NOT `continue-on-error` here, unlike neo. There it was non-fatal because neo's corpus emission
+      # ran under a different identity and had no reason to die with an enrichment credential. In this
+      # repository every stage needs this token, so a failed mint means there is no work to do — and a
+      # green run that collected nothing is the failure mode this whole ticket is about.
+      - name: Mint Intake installation token
+        id: intake-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.DATA_SYNC_INTAKE_APP_ID }}
+          private-key: ${{ secrets.DATA_SYNC_INTAKE_PRIVATE_KEY }}
+          owner: neomjs
+          repositories: |
+            devindex-opt-in
+            devindex-opt-out
+          permission-contents: write
+          permission-issues: write
+          permission-metadata: read
+
+      # `fetch-depth: 1`, and it is a decision rather than a default restated. Nothing in this job
+      # pushes, resets to a remote head, or compares SHAs for ancestry, so no history is required.
+      # neo's equivalent step sets `fetch-depth: 0` and that depth exists for its publish push, which
+      # this workflow does not have.
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # Matches the version neo's pipeline runs these same stages on today. Pinned to that rather
+      # than to a repository declaration, because this repository declares no `engines` — so the
+      # only evidence about what these services are known to run under is neo's workflow.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Probes reachability of both intake repositories and stops. Safe to repeat as often as an
+      # installation needs correcting, which is the property that makes it worth having: the stages
+      # that would otherwise serve as the check are the ones that mutate.
+      - name: Probe intake access
+        env:
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          for repo in devindex-opt-in devindex-opt-out; do
+            gh api "repos/neomjs/$repo" --jq '"reachable: \(.full_name)"'
+          done
+
+      # Named for what it does, not what it sounds like: this step does NOT exit the job. Every stage
+      # below is independently gated on `run_collection`, and that gating is what ends the run. A step
+      # called "Exit after probe" would describe a driver that does not exist.
+      - name: Report probe-only run
+        if: ${{ !inputs.run_collection }}
+        run: echo "run_collection was not set — credential probe only, no collection performed."
+
+      # Privacy first, and the ORDER is the guarantee rather than a preference: opt-in and opt-out are
+      # processed BEFORE discovery or enrichment, so a user who asked to be removed cannot be indexed
+      # by the Spider in the same run that honoured their request.
+      - name: DevIndex Opt-In
+        if: ${{ inputs.run_collection }}
+        env:
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:optin
+
+      - name: DevIndex Opt-Out
+        if: ${{ inputs.run_collection }}
+        env:
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:optout
+
+      - name: DevIndex Spider
+        if: ${{ inputs.run_collection }}
+        env:
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:spider -- --strategy random
+
+      # The 200-candidate argument is a rollout CEILING, not a promise: the Updater applies GraphQL
+      # cost admission and may process fewer.
+      - name: DevIndex Updater
+        if: ${{ inputs.run_collection }}
+        env:
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:update
+
+      # ────────────────────────────────────────────────────────────────────────────────────────────
+      # NOT IMPLEMENTED — the one step that is blocked, and the reason the schedule is absent.
+      #
+      # The derived artifacts (`users.jsonl`, `tracker.json`, `visited.json`, ~26.5 MiB) must be
+      # published WITHOUT a commit. Committing them is the defect neomjs/neo#17375 exists to stop:
+      # 1,790 lifetime commits to `users.jsonl` are 90.5% of neo's 5.21 GiB of blob bytes, and
+      # `neomjs/pages` is the live proof that a fresh repository doing the same reaches multiple GiB
+      # inside six months.
+      #
+      # The destination is an operator decision (own GitHub Pages artifact deploy, an upload to
+      # whatever serves neomjs.com, or object storage). Every candidate supports publish-without-commit;
+      # only the branch-based Pages source does not, and that source is precisely the mechanism that
+      # built the 985 MB.
+      #
+      # Until it lands, this job collects and the output dies with the runner. That is why
+      # `run_collection` defaults to false and why there is no `schedule:` — see the header.
+      # ────────────────────────────────────────────────────────────────────────────────────────────
+      - name: Publish the derived artifacts
+        if: ${{ inputs.run_collection }}
+        run: |
+          echo "::error::No publish destination is configured yet (neomjs/neo#17375)."
+          echo "The collection stages ran and their output is being discarded."
+          echo "Failing loudly rather than exiting 0, so this cannot be mistaken for a working pipeline."
+          exit 1

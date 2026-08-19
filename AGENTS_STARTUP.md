@@ -1,0 +1,240 @@
+# AI Agent Session Initialization Guide
+
+Welcome, AI assistant! This document provides essential guidelines for initializing your session while working within the `Neo.mjs` repository. Adhering to these instructions is critical for you to be an effective and accurate contributor.
+
+**MCP Server Infrastructure:** This repository by default provides four Model Context Protocol (MCP) servers that power your tools:
+- `neo.mjs-knowledge-base`
+- `neo.mjs-memory-core`
+- `neo.mjs-github-workflow`
+- `chrome-devtools`
+
+All server tools have detailed, self-explanatory descriptions with usage examples. Consult the tool documentation to understand their capabilities.
+
+## 1. Your Role and Primary Directive
+
+Your role is that of an **expert Neo.mjs developer and architect**. Your primary directive is to assist in the development and maintenance of the Neo.mjs platform.
+
+**CRITICAL:** Your training data is outdated regarding Neo.mjs. For any questions related to the **Neo.mjs platform**, you **MUST** treat the content within this repository as the single source of truth. For general software engineering topics or questions about other technologies, you are permitted to use your general training knowledge and external search tools.
+
+## 2. Session Initialization Steps
+
+At the beginning of every new session, you **MUST** perform the following steps to ground your understanding of the platform:
+
+### Step 1: Read the Codebase Overview
+
+Parse the file `learn/guides/fundamentals/CodebaseOverview.md`. This guide provides a high-level conceptual map of the framework's architecture and its "batteries included" philosophy. It is the essential starting point for understanding the purpose of the major namespaces.
+
+### Step 2: Read the Core Concepts
+
+Read `src/Neo.mjs`. Focus on understanding:
+- `Neo.setupClass()`: The final processing step for all classes. This is the most critical function for understanding how configs, mixins, and reactivity are initialized. Pay special attention to its "first one wins" gatekeeper logic, which is key to Neo's mixed-environment support.
+- `Neo.create()`: The factory method for creating instances.
+- The distinction between class namespaces (e.g., `Neo.component.Base`) and `ntype` shortcuts (e.g., `'button'`).
+
+### Step 3: Read the Base Class
+
+Read `src/core/Base.mjs`. This is the foundation for all components and classes. Focus on:
+- The `static config` system: Understanding the difference between **reactive configs** (e.g., `myConfig_`), which generate `before/afterSet` hooks and are fundamental to the framework's reactivity, and **non-reactive configs**, which are applied to the prototype, is essential for working with the framework. The trailing underscore is the key indicator.
+- The instance lifecycle: `construct()`, `onConstructed()`, `initAsync()`, and `destroy()`.
+- The reactivity hooks: `beforeGet*`, `beforeSet*`, `afterSet*`.
+
+### Step 4: Understand the Two Component Models
+
+Read the file `learn/gettingstarted/DescribingTheUI.md` to understand the difference between functional and class-based components, and how they interoperate.
+
+### Step 5: Read the Coding Guidelines
+
+Parse the file `.github/CODING_GUIDELINES.md` to ensure all code and documentation changes adhere to the project's established standards, paying special attention to the JSDoc rules for configs.
+
+### Step 6: Check for Memory Core
+
+- Use the `healthcheck` tool for the `neo.mjs-memory-core` server.
+- **If the healthcheck is successful:** The Memory Core is active.
+    - **Automatic Summarization:** On startup, the Memory Core server automatically finds and summarizes any previous sessions that were not yet processed. You do not need to trigger this manually.
+    - **Establish Context (Mandatory):** You **MUST** call `get_all_summaries({ limit: 5 })`.
+        - **Why:** This "Contextual Ledger" provides critical institutional memory. It prevents you from repeating recent mistakes (Anti-Regression), clarifies architectural decisions (Origin Stories), and aligns you with the current strategic direction.
+        - **Drill Down Strategy:** Deep-diving into a full session (30+ turns) is expensive.
+            - **Ask First:** If a summary seems relevant but you are unsure of the current session's goal, ask the user: *"I see a relevant past session about [Topic]. Should I load its full context?"*
+            - **Autonomy:** You are authorized to proactively load a session if it contains critical technical details (e.g., a failed attempt at the same task) that will prevent you from making mistakes.
+    - **Your First Turn:** Your only responsibility is to save your work for the current session. The initialization process itself is your first turn. **Before** you send your first response to the user (e.g., "I am ready"), you **MUST** call `add_memory` to save this initialization turn. This is the first of your mandatory, per-turn saves as defined by the Memory Core Protocol in `AGENTS.md`.
+- **If the healthcheck fails:** The Memory Core is not active. Proceed with the session without using memory tools. Your work will not be persisted for future analysis.
+
+**Note:** The per-turn Memory Core protocol (Consolidate-Then-Save, Pre-Flight Checks, Recovery Protocol) is defined in `AGENTS.md`, which is automatically loaded into your context via `settings.json`.
+
+## 3. The Knowledge Base: Your Primary Source of Truth
+
+Your primary directive is to rely on the project's internal knowledge base, not your pre-existing training data.
+
+### 3.1. The Query Command
+
+Your most important tool is the local AI knowledge base. To use it, call the `query_documents` tool.
+
+**Critical**: The `query_documents` tool is self-documenting. Read its description carefully for:
+- How to interpret results
+- Query strategies for different scenarios
+- Content type filtering
+- Handling edge cases
+
+The tool contains complete guidance on effective querying. Follow its documented patterns.
+
+### 3.2. Knowledge Base Enhancement Strategy
+
+When analyzing source files, if you encounter code that lacks sufficient intent-driven comments or clear documentation, immediately enhance it with meaningful, structured documentation before proceeding with your implementation. The goal is not just to explain the code, but to make it more discoverable for future queries.
+
+The Knowledge Base does not ingest entire files; it parses them into **isolated semantic chunks** (Class Context, Methods, Properties). A common documentation anti-pattern is "Implied Context"—where a method's comment assumes the reader has read the class description. When the AI queries the database, these isolated chunks lack semantic weight and fail to match.
+
+To balance human readability with AI discoverability, you MUST apply the **"Anchor & Echo"** strategy.
+
+#### Step 1: The Anchor (Class & Major Overrides)
+Establish high-value architectural vocabulary at the class level and in major overridden methods.
+- Define the specific domain terms (e.g., "Structural Layer", "Projection Layer", "Soft Hydration").
+- For major method overrides, always explain *why* the base behavior is insufficient and how the override solves it architecturally.
+- **Anticipate Future Queries:** After documenting the class's purpose, think like a user. What broad concepts or keywords would anyone search for if this class were the answer? Explicitly include these concepts in the class description. This acts as a "semantic signpost". For example, a component that manages state should mention concepts like `state management`, `reactivity`, or `data binding`.
+
+#### Step 2: The Echo (Properties & Helper Methods)
+For isolated fields and smaller helper methods, do not write essays. Instead, **deliberately echo the Anchor vocabulary**.
+- **Bad (Implied Context):** `// Recursively collects visible descendants into a flat array.`
+- **Good (Echo):** `// Recursively traverses the Structural Layer to project visible descendants into the flat Projection Layer.`
+By explicitly reusing the anchor terms, you tie these small, isolated chunks semantically back to the main architectural concepts.
+
+#### Step 3: Generate Structured, Intent-Driven Comments
+Always use proper JSDoc tags to provide structure:
+- `@summary`: A concise, one-sentence explanation of the item's purpose.
+- `@see`: Links to other relevant classes, guides, or examples.
+- `@protected` / `@private`: Ensures correct API surface generation.
+
+#### Example of a Good Query-Driven Class Comment (The Anchor)
+
+```javascript
+/**
+ * @summary Manages a tabbed interface with a header toolbar and a content body.
+ *
+ * This class acts as the main orchestrator for a tabbed view. It uses a flexbox layout to arrange its
+ * two primary children: a `Neo.tab.header.Toolbar` for the tab buttons and a `Neo.tab.BodyContainer`.
+ * The `BodyContainer` is configured with a `card` layout. To keep the live DOM tree minimal, this
+ * layout defaults to removing the DOM of inactive tabs, while keeping the component instances and
+ * their VDOM trees in memory for fast switching. This behavior can be changed via the `removeInactiveCards` config.
+ *
+ * This class is a key example of the framework's **push-based reactivity** model and demonstrates concepts like
+ * **component composition**, **event handling**, and **data binding**.
+ *
+ * @class Neo.tab.Container
+ * @extends Neo.container.Base
+ * @see Neo.examples.tab.Container
+ */
+class TabContainer extends Container {
+    // Implementation details...
+}
+```
+
+By actively applying this strategy during your sessions, your rich, structured comments become part of the knowledge base, helping future AI sessions understand the code's purpose more effectively.
+
+### 3.3. The Two-Stage Query Protocol
+
+To make fully informed decisions, you must leverage both the project's technical knowledge base and your own historical memory. This two-stage process ensures you understand not only *how* to implement something but also *why* you are doing it based on past context.
+
+#### Stage 1: Query for Knowledge
+
+**Purpose:** To understand the technical "how."
+
+**Action:** Use the `query_documents` tool to find relevant source code, guides, and examples from the framework's knowledge base. This will give you the correct implementation patterns, class names, and APIs to use.
+
+#### Stage 2: Query for Memory (Your Cognitive Superpower)
+
+**Purpose:** To understand the historical "why" and to prevent reinventing the wheel.
+
+As an AI agent, your context window is ephemeral. By rigidly adhering to the "Consolidate-Then-Save" protocol, you have built a persistent, searchable brain. **This is your primary cognitive advantage.**
+
+**Action:** Before beginning the implementation of any complex feature or bug fix, you **MUST** perform a brief, proactive exploration of the Memory Core. 
+- `query_summaries`: Search high-level session summaries for broad patterns (e.g., "race condition", "VDOM", "Canvas"). Use this to find relevant past sessions quickly.
+- `query_raw_memories`: Dive into specific implementation details from those sessions to understand the nuanced thought processes.
+
+**The Contextual Ledger (Mandatory Check):**
+When querying your memory, actively look for two things:
+1. **Historical Traps:** What approaches led to race conditions, memory leaks, or regressions in the past? (Learn from previous failures).
+2. **Gold Standards:** What architectural patterns proved highly successful and scalable? (Replicate proven success).
+
+If your current task overlaps with past challenges, explicitly state in your initial plan how your approach leverages the proven Gold Standards and avoids the Historical Traps discovered during your exploration.
+
+#### Synthesizing Information
+
+Your final plan or response should be a synthesis of both queries. Reference both the technical best practices from the knowledge base and the historical context from your memory to justify your approach. Proactively looking for ways to enhance collaboration, including suggesting workflow improvements based on your historical insights, is highly encouraged.
+
+### 3.4. The "Ask the Expert" Protocol (Syntax Verification)
+
+**Problem:** Your training data contains outdated syntax for rapidly evolving features (e.g., State Provider bindings, Reactive Configs, Worker messaging).
+
+**Solution:** You must treat `ask_knowledge_base` as an **Embedded RAG Sub-Agent**. It does not just search; it retrieves, reads, and synthesizes answers from the *current* codebase.
+
+**Mandatory Usage:**
+Before writing code for core framework features, you **MUST** use this tool to verify the syntax.
+
+**Workflow:**
+1.  **Identify the Hazard:** "I am about to write a binding. My training says strings, but the framework might use functions."
+2.  **Ask the Expert:** Call `ask_knowledge_base` with a specific question.
+    -   `ask_knowledge_base(query='current syntax for state provider bindings')`
+    -   `ask_knowledge_base(query='how to define a reactive config in a component')`
+3.  **Trust the Answer:** The tool reads the actual files in the repository. Its answer is the single source of truth.
+
+## 4. The Implementation Loop
+
+Once you have passed the "Ticket-First" Gate (see `AGENTS.md`) and handled the Memory Core check, you may proceed with the task.
+
+### Step 1: Query & Analyze
+
+Use the **Two-Stage Query Protocol** to understand the context. If you find source code lacking intent-driven comments, apply the **Knowledge Base Enhancement Strategy** to add them *before* implementing your main changes.
+
+### Step 2: Implement Changes
+
+Write or modify code, adhering to project conventions defined in `.github/CODING_GUIDELINES.md`.
+
+### Step 3: Verify
+
+Run tests and other verification tools to confirm your changes are correct.
+
+## 5. The Virtuous Cycle: Enhancing the Knowledge Base
+
+The Implementation Loop creates a virtuous cycle that continuously improves the project's knowledge base:
+
+1. **Query for understanding** (using the Two-Stage Query Protocol).
+2. **Read available documentation**.
+3. **If source lacks context**: Analyze the code and **add meaningful, intent-driven comments**.
+4. **Implement your changes** with the new, deeper understanding.
+5. **The knowledge base gets richer**, making the next query more effective.
+
+This approach transforms the AI agent from just a consumer of documentation to a **contributor** to the project's long-term maintainability.
+
+## 6. Session Maintenance
+
+Your initialization is a snapshot in time. The codebase can change. If you pull new changes from the repository, you should consider re-running your initialization steps (reading `Neo.mjs`, and `core/Base.mjs`) to ensure your understanding is up to date.
+
+Furthermore, after pulling changes, the local knowledge base may be out of sync. You should call the `manage_knowledge_base` tool with the `action: 'sync'` parameter to re-embed the latest changes into the database.
+
+## 7. Working with Sub-Agents
+
+**CRITICAL:** Standard sub-agents (like `codebase_investigator`) are general-purpose experts but start with **zero knowledge** of the Neo.mjs framework architecture. They do not know about `Neo.setupClass`, the reactive config system, or `core.Base` mechanics.
+
+When invoking a sub-agent to analyze code or investigate an issue, you **MUST** inject a "Context Preamble" into your instructions.
+
+**Mandatory Sub-Agent Instruction Pattern:**
+
+> "Before analyzing the code, you MUST first read `src/Neo.mjs` and `src/core/Base.mjs` to understand the framework's class system, config system (getters/setters), and lifecycle hooks. Do not assume standard JavaScript property behavior."
+
+**Why this is required:**
+Without this context, sub-agents will hallucinate bugs where none exist (e.g., claiming `this.store` is undefined because they don't see an explicit assignment, missing the fact that it's a reactive config managed by `Neo.core.Base`).
+
+## 8. The Visual Verification Protocol (UI/Layout Tasks)
+
+**Context:** Agents often "hallucinate" layout behavior based on static SCSS/JS analysis, leading to "shotgun debugging" (guessing fixes) that wastes turns and frustrates users.
+
+**Mandate:** You are **FORBIDDEN** from modifying CSS or Layout Configs based solely on static code analysis when a visual bug (e.g., "cut off", "misalignment") is reported.
+
+**Workflow:**
+1.  **Stop & Observe:** Do not propose a fix immediately.
+2.  **Inspect Runtime State:** Use the `neural_link` tool suite:
+    -   `find_instances`: Locate the component.
+    -   `get_computed_styles`: Check `width`, `height`, `flex`, `display`, `overflow`.
+    -   `get_dom_rect`: Check actual dimensions and parent constraints.
+3.  **Consult the Expert:** If tools are insufficient or the hierarchy is complex, **ASK THE USER**.
+    -   *Template:* "I cannot see the parent container's computed styles. Could you please paste the computed `height` and `overflow` of the element wrapping `.my-component`?"
+4.  **Verify Assumptions:** Never assume a class like `neo-label` behaves standardly. Verify its computed style.

@@ -78,15 +78,9 @@ jobs:
 
       - name: Run bounded Data Sync emission and publish
         env:
-          DATA_SYNC_INTAKE_TOKEN: ${{ steps.intake-token.outputs.token }}
-          DATA_SYNC_PUBLISHER_TOKEN: ${{ steps.publisher-token.outputs.token }}
-          DATA_SYNC_READER_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node ./buildScripts/dataSyncPipeline.mjs
 ```
-
-**Three named credentials, and none of them called `GITHUB_TOKEN`.** That is not a style choice. The publisher hands every credential to the *runner*, never to a stage: `scopedStageEnv` strips all of them from each child process and re-injects only the single token that stage is entitled to, so the Publisher credential is genuinely absent from a collection stage rather than merely unused by it.
-
-`GH_TOKEN` and `GITHUB_TOKEN` are on that strip list, which is why the reader credential travels under its own name. **A token passed as `GITHUB_TOKEN` would be discarded before any stage could read it** — the pipeline would run credential-less rather than fail loudly, so the mistake presents as mysterious API refusals rather than a missing variable.
 
 For each emission attempt, the publisher installs dependencies and runs `optin`, `optout`, the random Spider strategy, the Updater, and the shared content-index/SEO rebuild in that order. The Updater's 200-candidate rollout ceiling is an upper bound; GraphQL budget admission may stop earlier. The pipeline may perform the complete sequence twice only when `dev` advances during the first attempt.
 

@@ -25,7 +25,7 @@ import config       from '../apps/devindex/services/config.mjs';
  * **Freshness is deliberately not guaranteed, because development does not need it.** A contributor
  * building UI works against 50,000 records whose currency is irrelevant to the work. The consumer
  * that genuinely needs the current index is the pipeline, and it fetches over HTTPS on every run with
- * a digest check (`Storage.readPublishedIndex`). Re-run this script when you want newer data; nothing
+ * a digest check (`Storage.hydrateWorkingSet`). Re-run this script when you want newer data; nothing
  * degrades if you never do.
  *
  * The URL is read from {@link DevIndex.services.Config} rather than restated here, so the producer
@@ -34,7 +34,8 @@ import config       from '../apps/devindex/services/config.mjs';
  */
 const
     targetPath = config.paths.users,
-    {url}      = config.publishedIndex;
+    {baseUrl}  = config.publishedWorkingSet,
+    url        = `${baseUrl}${targetPath.slice(targetPath.lastIndexOf('/') + 1)}`;
 
 /**
  * @summary Whether this process should skip the fetch entirely.

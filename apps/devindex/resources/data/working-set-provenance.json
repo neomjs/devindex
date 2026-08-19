@@ -1,0 +1,5 @@
+{
+  "digests": null,
+  "publishedAt": null,
+  "note": "Nothing published from this repository yet. `digests: null` takes Storage's absence branch, which adopts the published working set unverified — the intended hand-off while neomjs/neo is still the publisher. The first publishing run replaces this with real digests and verification becomes live."
+}

@@ -174,51 +174,68 @@ const defaultConfig = {
         optinSync: path.resolve(projectRoot, 'apps/devindex/resources/data/optin-sync.json'),
 
         /**
-         * Provenance for the last index this pipeline published: a SHA-256 over the exact bytes
-         * written, plus line count, byte length and timestamp. Small, and deliberately tracked in git
-         * even though the index it describes is on its way out of git — it is the trusted anchor a
-         * fetched artifact is checked against, so it must live somewhere the artifact cannot
-         * influence.
+         * Provenance for the last WORKING SET this pipeline published: one SHA-256 per derived file,
+         * recorded together in a single write. Small, and deliberately tracked in git even though the
+         * files it describes are permanently out of git — it is the trusted anchor the fetched set is
+         * checked against, so it must live somewhere those files cannot influence.
+         *
+         * **Set-scoped rather than per-file, because a partial match is the dangerous outcome.**
+         * `users.jsonl`, `tracker.json` and `visited.json` are one working set: every run reads all
+         * three, mutates all three and writes all three (`Cleanup` alone rewrites the lot before every
+         * command). Verifying them independently would allow a run to proceed with an index from one
+         * generation and a tracker from another — and `tracker.json` is what decides who gets
+         * enriched, so a torn read makes the scheduler skip users that are stale and re-enrich users
+         * that are not, while every log line stays green. One record, checked as a unit, is what makes
+         * that unrepresentable.
          *
          * A content digest rather than the served `ETag`: an `ETag` is host-assigned and survives
          * neither recompression nor a CDN swap, so it answers *is this the same response* where this
          * needs *is this the same content*.
          * @type {string}
          */
-        indexProvenance: path.resolve(projectRoot, 'apps/devindex/resources/data/index-provenance.json')
+        workingSetProvenance: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-provenance.json')
     },
 
     /**
-     * The published index, read rather than re-derived.
+     * The published working set, read rather than re-derived.
      *
-     * The Data Factory used to obtain its previous state from whatever the checkout held, which is
-     * why the index had to be committed at all. The browser has always read this file over HTTPS from
-     * the deployed site; only the producer read it from disk. This block moves the producer onto the
-     * consumer's path, which is the prerequisite for the derived artifacts leaving git entirely.
+     * **These three files are one object with one lifecycle, not a deliverable plus some state.**
+     * Every run reads all three, mutates all three and writes all three. `users.jsonl` is the only one
+     * a browser ever sees, which made it tempting to treat the other two as lesser — but by history
+     * cost they are the same problem: in `neomjs/neo` the three carry 40.06 GB, 3.76 GB and 1.38 GB of
+     * blob bytes respectively, and `tracker.json` has MORE commits than the index does. Sizing them by
+     * their on-disk bytes rather than their commit rate is what made them look cheap.
+     *
+     * So they travel together: fetched together, verified together, published together. There is no
+     * bootstrap phase — the first run in this repository is simply the next iteration of a loop that
+     * has been turning hourly elsewhere.
      */
-    publishedIndex: {
+    publishedWorkingSet: {
         /**
-         * Absolute URL of the deployed index. Declared once and read at the use site — the host is
-         * never reassembled from parts anywhere else.
+         * Base URL the working set is fetched from. Declared once; the three filenames are derived
+         * from `paths` rather than restated, so a rename cannot desynchronise the fetch from the write.
          *
-         * **This URL still points at the artifact neo publishes**, because that is where the index
-         * actually is served from today. It is a late binding by design: when the operator selects
-         * this repository's own hosting destination, this one literal changes and nothing else does.
+         * **Still points at what neo publishes**, because that is where all three are served from
+         * today — verified: `users.jsonl`, `tracker.json` and `visited.json` each return 200 from this
+         * base, since `neomjs/pages` carries the whole `node_modules/neo.mjs/` tree and the Cloud Run
+         * middleware proxies it. So the READ side is already live; only publishing is not.
          *
-         * **Accepted risk, named rather than guarded: a fork reads production once, unverified.**
-         * There is no environment override here. On a fork or staging deploy `index-provenance.json`
-         * is absent, which takes the absence branch — the branch that accepts the fetched bytes
-         * without a digest to check them against — so upstream's contributor index is adopted as that
-         * deployment's own prior state on its first run. Accepted because inventing a seam now would
-         * encode a host layout that is about to change; running this pipeline outside the canonical
-         * deployment is the trigger for adding the override, not a reason to add it today.
+         * That is why `working-set-provenance.json` ships with `digests: null`. While neo is still the
+         * publisher, this repository cannot hold a digest for bytes it did not write — neo's next
+         * hourly run would invalidate it and every hydration would reject. A null record takes the
+         * documented absence branch instead, adopting the published set unverified, which is exactly
+         * the hand-off this migration needs. The first run that PUBLISHES writes real digests and
+         * verification becomes live from then on.
+         *
+         * When the destination is chosen this one literal changes and nothing else does.
          * @type {string}
          */
-        url: 'https://neomjs.com/node_modules/neo.mjs/apps/devindex/resources/data/users.jsonl',
+        baseUrl: 'https://neomjs.com/node_modules/neo.mjs/apps/devindex/resources/data/',
 
         /**
-         * Request timeout in ms. Generous: the artifact is ~24 MB and a slow fetch that succeeds is
-         * worth more than a fast fall back to the checkout, which is the path this exists to retire.
+         * Request timeout in ms, per file. Generous: the index alone is ~23 MiB and a slow fetch that
+         * succeeds is worth more than a fast fall back to the checkout, which is the path this exists
+         * to retire.
          * @type {number}
          */
         timeout: 120000

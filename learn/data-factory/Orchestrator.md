@@ -63,32 +63,69 @@ When the `update` command is run, the Manager doesn't just blindly pass the whol
 
 ## The Automated Pipeline (GitHub Actions)
 
-While a developer can run commands manually via the CLI, the DevIndex is designed to be fully autonomous. The ultimate orchestrator is the GitHub Actions workflow defined in `.github/workflows/data-sync-pipeline.yml`. The workflow delegates the mutation-sensitive part to `buildScripts/dataSyncPipeline.mjs`, keeping the bounded Git state machine executable and testable outside YAML.
+While a developer can run commands manually via the CLI, the DevIndex is designed to be autonomous.
+The workflow lives at `.github/workflows/data-sync-pipeline.yml` **in this repository** — it runs the
+four collection stages directly as steps, with no intermediate build script.
 
-This workflow runs on an **hourly schedule**, checks out the complete `dev` history, and invokes one bounded publisher:
+> **This section used to describe `neomjs/neo`'s pipeline**, including a `buildScripts/dataSyncPipeline.mjs`
+> that has never existed here. The collection stages moved into this repository; what follows describes
+> what actually ships beside this guide.
 
 ```yaml readonly
 jobs:
-  run-pipeline:
+  collect:
+    permissions:
+      contents: read
+      actions: read
     steps:
+      - name: Mint Intake installation token
+        uses: actions/create-github-app-token@v3
+        with:
+          owner: neomjs
+          repositories: |
+            devindex-opt-in
+            devindex-opt-out
+
       - uses: actions/checkout@v6
         with:
-          ref: dev
-          fetch-depth: 0
-
-      - name: Run bounded Data Sync emission and publish
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: node ./buildScripts/dataSyncPipeline.mjs
+          fetch-depth: 1
 ```
 
-For each emission attempt, the publisher installs dependencies and runs `optin`, `optout`, the random Spider strategy, the Updater, and the shared content-index/SEO rebuild in that order. The Updater's 200-candidate rollout ceiling is an upper bound; GraphQL budget admission may stop earlier. The pipeline may perform the complete sequence twice only when `dev` advances during the first attempt.
+Stages run in a fixed order: **Opt-In → Opt-Out → Spider → Updater**, each carrying the Intake App
+token. That token is installed on the two intake repositories and *not* on this one, so it is minted
+by naming them explicitly.
 
 ### Key Pipeline Concepts
 
-1.  **Privacy-First Execution:** The `optin` and `optout` services run *before* discovery or enrichment. This ensures we never accidentally index a user who requested removal in the same hour.
-2.  **Cost-Bounded Enrichment:** The 200-user argument is a rollout ceiling. The Updater admits fewer users when its shared GraphQL budget cannot preserve the downstream reserve.
-3.  **Downstream Reservation:** DevIndex leaves declared GraphQL capacity for the label-index query in the following content-index and SEO rebuild.
-4.  **Disposable Emission Attempts:** Each attempt captures its starting `dev` SHA. After the generators finish, the publisher fetches `origin/dev`. If authority moved, it discards the runner's derived output, resets to the new head, and reruns the complete emission once.
-5.  **Bounded Freshness:** Freshness is checked after emission, after staging, and immediately before publication. A second concurrent advance resets the ephemeral checkout again and fails with the attempt plus base/current SHAs instead of entering an unbounded retry loop.
-6.  **Atomic Allowlisted Commits:** Only DevIndex JSON/JSONL output, Portal data indexes, `sitemap.xml`, and `llms.txt` can enter the generated commit. The publisher never rebases, resolves derived-file conflicts, or force-pushes; the final non-force push therefore proves that its single commit is based on the verified current `dev` head.
+1.  **Privacy-First Execution:** `optin` and `optout` run *before* discovery or enrichment, so a user
+    who asked to be removed cannot be indexed by the Spider in the same run that honoured the request.
+2.  **Cost-Bounded Enrichment:** the 200-user argument is a rollout ceiling. The Updater admits fewer
+    when its GraphQL budget cannot preserve the downstream reserve.
+3.  **`fetch-depth: 1`, deliberately:** nothing here pushes, resets to a remote head, or compares SHAs
+    for ancestry, so no history is needed. neo's equivalent sets `0` for a publish push this workflow
+    does not have.
+4.  **No `publishGeneratedProgressOnFailure`:** neo's stages carry a flag that publishes partial output
+    when a stage fails. It exists because DevIndex enrichment shared a process with neo's *corpus*
+    publication — one denied stage discarded the whole corpus unpublished and froze it for nineteen
+    hours. Splitting the process removes the coupling that flag protected against, so it is
+    deliberately not ported. Carrying it here would import a workaround into a structure that cannot
+    have the problem, and would read as though it still could.
+5.  **The working set round-trips, it is never committed:** the run fetches `users.jsonl`,
+    `tracker.json` and `visited.json` as one verified set and publishes them the same way. See
+    [Storage](./Storage.md#the-working-set-derived-delivered-never-versioned) — this is the single most
+    important invariant in the pipeline, and the reason `neomjs/neo`'s `.git` is 5.2 GB.
+
+### Not yet wired
+
+Two things are deliberately absent, and the workflow says so where a reader meets them:
+
+*   **No `schedule:` trigger.** The publish destination is not chosen yet. These stages are not inert —
+    `optout` comments on and closes real issues — so running hourly with nowhere to publish would mutate
+    other repositories to produce output the runner discards.
+*   **No publish step.** It is present but fails loudly, so a run cannot be mistaken for a working
+    pipeline.
+
+Until both land, dispatch the workflow manually. Leaving `run_collection` **off** performs a credential
+probe with no side effects — it mints the token, confirms both intake repositories are reachable, and
+stops. That is the check you can safely repeat while correcting an installation, which is exactly when
+you need one.

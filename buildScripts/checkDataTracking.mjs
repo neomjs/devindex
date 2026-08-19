@@ -10,7 +10,7 @@ import {execFileSync} from 'child_process';
  * `.git` while this repository's is 14 MB, and there is no cheap way back once the blobs exist.
  *
  * Curated files must stay IN git: allowlist, blocklist, failed, optin-sync, optout-sync, threshold
- * and the index provenance total 543 bytes and are irreplaceable. `blocklist.json` holds people's
+ * and the working-set provenance total 543 bytes and are irreplaceable. `blocklist.json` holds people's
  * opt-out decisions.
  *
  * Checking only the first would be satisfied by `.gitignore`-ing the whole directory — which passes
@@ -35,7 +35,7 @@ const
         'allowlist.json',
         'blocklist.json',
         'failed.json',
-        'index-provenance.json',
+        'working-set-provenance.json',
         'optin-sync.json',
         'optout-sync.json',
         'threshold.json'

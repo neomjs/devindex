@@ -65,6 +65,43 @@ The Storage service maintains several distinct data stores:
     *   **Format:** JSON Array (treated as a Set).
     *   **Purpose:** Stores keys (e.g., `repo:facebook/react`) to prevent the Spider from redundantly re-scanning the same sources across different runs.
 
+### The Working Set: derived, delivered, never versioned
+
+The first three files above — `users.jsonl`, `tracker.json` and `visited.json` — form the **working
+set**. Every run reads all three, mutates all three and writes all three; `Cleanup` alone rewrites the
+lot before every command. They are treated as one object with one lifecycle, and that has two
+consequences worth knowing before you touch this layer.
+
+**They are not in git, and must never be.** All three are regenerated in full every hour, so
+committing them makes each hour permanent. The same three files in `neomjs/neo` carry **40.06 GB**,
+**3.76 GB** and **1.38 GB** of blob bytes respectively — and `tracker.json` has *more* commits behind
+it than the index does, despite being a tenth of the size. Judging these by their on-disk bytes rather
+than their commit rate is the mistake that lets the small ones through.
+
+So `.gitignore` excludes them and `npm run check-data-tracking` fails if any becomes tracked. The same
+guard asserts the *curated* files ARE tracked, because ignoring the directory wholesale would satisfy
+the first rule while silently discarding `blocklist.json` — somebody's opt-out decision, and the one
+file here nothing can regenerate.
+
+**They are fetched as a set, and verified as a set.** `Storage.hydrateWorkingSet()` downloads all
+three from `config.publishedWorkingSet.baseUrl` once per process, before anything reads them, and
+adopts them **all-or-nothing**. A partial adoption is the dangerous outcome: `tracker.json` decides who
+gets enriched, so an index from one generation paired with a tracker from another makes the Updater
+skip users that are stale and re-enrich users that are not — silently, with every log line green.
+`working-set-provenance.json` holds one digest per file, written together and checked together, so a
+mismatch on any one rejects the whole set rather than mixing.
+
+Rejection is never silent, and never empty. A refused set falls back to the local copies and says why.
+If there is no local index either, `getUsers()` **throws** rather than returning `[]` — because
+`updateUsers()` merges into whatever it returns and writes the result as the entire index, so an empty
+prior state would publish a truncated one. `DEVINDEX_ALLOW_EMPTY_INDEX=1` is the declared escape for a
+genuine first-ever run, which is the only case that legitimately has nothing and which no measurement
+can distinguish from an outage.
+
+**Working locally:** `npm install` fetches the index for you, and `npm run devindex:pull-data`
+refreshes it. Your copy going stale does not matter — development needs *representative* data, not
+current data. The pipeline is the consumer that needs currency, and it re-fetches every run.
+
 4.  **`blocklist.json` & `allowlist.json` (Overrides)**
     *   **Format:** JSON Arrays.
     *   **Purpose:** Configuration files for manual or automated overrides (Opt-Outs and VIPs). The Storage service automatically enforces case-insensitivity when interacting with these lists.

@@ -250,6 +250,8 @@ class Storage extends Base {
      * @returns {Promise<Set<String>>} Set of visited keys (e.g. "repo:owner/name", "user:login").
      */
     async getVisited() {
+        await this.hydrateWorkingSet();
+
         const list = await this.readJson(config.paths.visited, []);
         return new Set(list);
     }
@@ -260,6 +262,8 @@ class Storage extends Base {
      * @returns {Promise<void>}
      */
     async updateVisited(newItems) {
+        await this.hydrateWorkingSet();
+
         const current    = await this.readJson(config.paths.visited, []);
         const currentSet = new Set(current);
         let changed      = false;
@@ -283,6 +287,8 @@ class Storage extends Base {
      * @returns {Promise<Array<{login: String, lastUpdate: String}>>}
      */
     async getTracker() {
+        await this.hydrateWorkingSet();
+
         const raw = await this.readJson(config.paths.tracker, {});
 
         // Return as Array for Consumers
@@ -306,6 +312,8 @@ class Storage extends Base {
      * @returns {Promise<void>}
      */
     async updateTracker(updates) {
+        await this.hydrateWorkingSet();
+
         const current = await this.readJson(config.paths.tracker, {});
         // Normalize keys to lowercase to prevent duplicates
         const map = {};
@@ -354,34 +362,136 @@ class Storage extends Base {
     }
 
     /**
-     * Reads the rich users data, preferring the published artifact over the checkout copy.
+     * @summary Fetches the published working set onto disk, once per process, before anything reads it.
+     *
+     * **The three derived files are one object.** Every run reads all three, mutates all three and
+     * writes all three — `Cleanup` alone rewrites the lot before every command. Fetching them
+     * independently would let a run proceed with an index from one generation and a tracker from
+     * another, and `tracker.json` is what decides who gets enriched: a torn read makes the scheduler
+     * skip users that are stale and re-enrich users that are not, silently. So the set is verified as
+     * a unit and adopted all-or-nothing.
+     *
+     * **Materialised to disk rather than held in memory**, deliberately. Every existing reader and
+     * writer already goes through `readJson`/`writeJson` on these paths; landing the fetched bytes
+     * there means none of them need to know this happened, and there is no way for one caller to see
+     * the fetched copy while another sees the checkout copy. The alternative — memoising parsed
+     * objects — would leave `updateVisited`, which reads its path directly, on the old data.
+     *
+     * Runs before the first access rather than on demand, for the same reason: hydration WRITES, so it
+     * has to happen while the local files are still untouched by this run.
+     * @returns {Promise<void>}
+     */
+    async hydrateWorkingSet() {
+        this.hydration ??= this.fetchAndAdoptWorkingSet();
+        return this.hydration
+    }
+
+    /**
+     * @summary Fetches all three derived files, verifies them as one set, and adopts them together.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async fetchAndAdoptWorkingSet() {
+        const
+            {baseUrl, timeout} = config.publishedWorkingSet,
+            members            = this.workingSetMembers(),
+            provenance         = await this.readJson(config.paths.workingSetProvenance, null),
+            fetched            = {};
+
+        for (const {key, file, path: localPath} of members) {
+            const url = `${baseUrl}${file}`;
+
+            let response, text;
+
+            try {
+                response = await fetch(url, {signal: AbortSignal.timeout(timeout)});
+
+                if (!response.ok) {
+                    return this.rejectWorkingSet(`HTTP ${response.status} for ${file}`)
+                }
+
+                text = await response.text();
+            } catch (error) {
+                return this.rejectWorkingSet(`fetch failed for ${file}: ${error.message}`)
+            }
+
+            const digest = this.digestOf(text);
+
+            // Absence of a record is not mismatch. A deployment that has never published has nothing
+            // to compare against, and treating that as tampering would make this path unreachable.
+            if (provenance?.digests) {
+                if (provenance.digests[key] !== digest) {
+                    return this.rejectWorkingSet(
+                        `${file} does not match what we last published ` +
+                        `(recorded ${String(provenance.digests[key]).slice(0, 12)}, fetched ${digest.slice(0, 12)})`
+                    )
+                }
+            }
+
+            fetched[key] = {text, localPath};
+        }
+
+        if (!provenance?.digests) {
+            console.warn('[Storage] No working-set provenance recorded yet — adopting the published set unverified. This is expected exactly once.');
+        }
+
+        // Written only after EVERY member fetched and verified, so a failure part-way through leaves
+        // the local set exactly as it was rather than half-replaced.
+        for (const {text, localPath} of Object.values(fetched)) {
+            await fs.writeFile(`${localPath}.tmp`, text, 'utf-8');
+            await fs.rename(`${localPath}.tmp`, localPath);
+        }
+
+        console.log(`[Storage] Adopted the published working set (${members.length} files).`)
+    }
+
+    /**
+     * @summary The derived files that travel together, paired with their published basenames.
+     *
+     * Basenames are derived from `config.paths` rather than restated, so a rename cannot desynchronise
+     * what is fetched from what is written.
+     * @returns {Object[]}
+     * @private
+     */
+    workingSetMembers() {
+        return ['users', 'tracker', 'visited'].map(key => ({
+            key,
+            path: config.paths[key],
+            file: config.paths[key].slice(config.paths[key].lastIndexOf('/') + 1)
+        }))
+    }
+
+    /**
+     * @summary Records why the published set was refused, then leaves the local copies in place.
+     *
+     * Audible by construction: a silent rejection would leave the git coupling in place while every
+     * log line claimed it had been removed.
+     * @param {String} reason
+     * @returns {void}
+     * @private
+     */
+    rejectWorkingSet(reason) {
+        console.warn(`[Storage] Using the local working set — ${reason}.`);
+    }
+
+    /**
+     * Reads the rich users data.
      * @returns {Promise<Array<Object>>}
      */
     async getUsers() {
-        const published = await this.readPublishedIndex();
-
-        if (published) return published;
+        await this.hydrateWorkingSet();
 
         // **Fail closed. An absent prior index is indistinguishable from a lost one, and the two have
         // opposite correct responses.**
         //
-        // `updateUsers` merges new records INTO whatever this returns and writes the result as the
-        // whole index. So returning `[]` after a failed fetch does not degrade — it TRUNCATES: a run
-        // that enriched 200 users would publish an index of 200 and record provenance for it, and
-        // 49,800 contributors would be gone with every log line green.
-        //
-        // That was survivable while the checkout carried a committed copy, because the fallback always
-        // landed on ~50,000 real records. Removing the file from git removed that net, and this
-        // fallback outlived the assumption it was written under.
-        //
-        // A developer with a local copy still gets it — that path is unchanged and is why the check is
-        // for ABSENCE rather than for CI. Only the case with no fetched index AND no local one throws,
-        // because there is genuinely no prior state to merge into, and proceeding would destroy the
-        // index rather than rebuild it. A true first-ever run is the one case that legitimately has
-        // nothing, and it is not distinguishable from an outage — so it must be declared, not guessed.
-        const local = await this.readJson(config.paths.users, null);
+        // `updateUsers` merges new records INTO this and writes the result as the whole index, so
+        // returning `[]` does not degrade — it TRUNCATES: a run that enriched 200 users would publish
+        // an index of 200 and 49,800 contributors would be gone with every log line green. That was
+        // survivable while the checkout carried a committed copy; removing the file from git removed
+        // that net.
+        const users = await this.readJson(config.paths.users, null);
 
-        if (local) return local;
+        if (users) return users;
 
         if (process.env.DEVINDEX_ALLOW_EMPTY_INDEX) {
             console.warn('[Storage] No published and no local index — proceeding EMPTY because DEVINDEX_ALLOW_EMPTY_INDEX is set. This publishes whatever this run produces as the entire index.');
@@ -389,86 +499,14 @@ class Storage extends Base {
         }
 
         throw new Error(
-            'DevIndex has no prior index: the published artifact could not be read and no local copy exists. ' +
+            'DevIndex has no prior index: the published working set could not be adopted and no local copy exists. ' +
             'Refusing to continue, because merging this run\'s output into an empty index would publish a truncated one. ' +
             'Fix the fetch, run `npm run devindex:pull-data`, or set DEVINDEX_ALLOW_EMPTY_INDEX=1 if this really is a first-ever run.'
         )
     }
 
     /**
-     * @summary Fetches the deployed index and returns it only if it matches recorded provenance.
-     *
-     * Ported from `neomjs/neo` #17374, where this pipeline still lives, so the producer obtains its
-     * previous state over HTTPS rather than from whatever the checkout happens to hold. That is the
-     * prerequisite for #17375: once nothing here READS the index from git, nothing requires it to be
-     * WRITTEN to git either, and 26.5 MiB of derived data stops accruing blobs forever.
-     * @returns {Promise<Array<Object>|null>} Parsed records, or `null` when the caller must fall back.
-     * @private
-     */
-    async readPublishedIndex() {
-        const {url, timeout} = config.publishedIndex;
-
-        let response, text;
-
-        try {
-            response = await fetch(url, {signal: AbortSignal.timeout(timeout)});
-
-            if (!response.ok) {
-                return this.rejectPublishedIndex(`HTTP ${response.status} from ${url}`);
-            }
-
-            text = await response.text();
-        } catch (error) {
-            return this.rejectPublishedIndex(`fetch failed for ${url}: ${error.message}`);
-        }
-
-        const
-            provenance = await this.readJson(config.paths.indexProvenance, null),
-            digest     = this.digestOf(text);
-
-        // Absence is not mismatch. The first run after adoption has nothing recorded to compare
-        // against, and treating that as a failure would make this path unreachable forever.
-        if (!provenance?.digest) {
-            console.warn('[Storage] No index provenance recorded yet — accepting the published index unverified. This is expected exactly once.');
-        } else if (provenance.digest !== digest) {
-            return this.rejectPublishedIndex(
-                `published index does not match what we last wrote (recorded ${provenance.digest.slice(0, 12)}, fetched ${digest.slice(0, 12)}). ` +
-                'Either the last publish has not propagated, or something else wrote to that URL.'
-            );
-        }
-
-        // Guarded, and the bootstrap run is exactly why. With provenance recorded, a mangled body
-        // fails the digest comparison above and never reaches here. With provenance ABSENT — the
-        // first run after adoption, which the branch above calls expected — nothing has verified
-        // these bytes, so a 200 carrying an HTML interstitial or a truncated transfer reaches
-        // `JSON.parse`. Unguarded, that throws out of `getUsers()` and takes the run down on the one
-        // run this method documents as normal.
-        try {
-            return text
-                .split('\n')
-                .filter(line => line.trim())
-                .map(line => JSON.parse(line));
-        } catch (error) {
-            return this.rejectPublishedIndex(`published index is not parseable JSONL: ${error.message}`);
-        }
-    }
-
-    /**
-     * @summary Records why the fetched index was refused, then hands the caller the checkout path.
-     *
-     * Audible by construction: a silent fallback would leave the git coupling in place while every
-     * log line claimed it had been removed.
-     * @param {String} reason
-     * @returns {null}
-     * @private
-     */
-    rejectPublishedIndex(reason) {
-        console.warn(`[Storage] Falling back to the checkout copy of the index — ${reason}`);
-        return null;
-    }
-
-    /**
-     * @summary Content digest used to prove a fetched index is the one this pipeline wrote.
+     * @summary Content digest used to prove a fetched file is the one this pipeline wrote.
      * @param {String} content
      * @returns {String} Hex-encoded SHA-256.
      * @private
@@ -478,20 +516,28 @@ class Storage extends Base {
     }
 
     /**
-     * @summary Records what this pipeline just published, so the next run can recognise it.
+     * @summary Records the whole working set in one write, so the next run can recognise it.
      *
-     * The digest is over the exact bytes written, which is what a later fetch returns — deriving it
-     * from the in-memory records instead would compare a re-serialisation against a transmission and
+     * One record covering three digests rather than three records: the set is adopted all-or-nothing,
+     * so provenance that could be partially current would describe a state the reader must never act
+     * on. Digests are taken over the bytes on disk — which is what a later fetch returns — because
+     * deriving them from in-memory objects would compare a re-serialisation against a transmission and
      * drift on any formatting change, failing in a way that looks like tampering.
-     * @param {String} content Exact serialized index as written to disk.
      * @returns {Promise<void>}
-     * @private
      */
-    async recordIndexProvenance(content) {
-        await this.writeJson(config.paths.indexProvenance, {
-            digest     : this.digestOf(content),
-            lines      : content.split('\n').filter(line => line.trim()).length,
-            bytes      : Buffer.byteLength(content, 'utf-8'),
+    async recordWorkingSetProvenance() {
+        const digests = {};
+
+        for (const {key, path: localPath} of this.workingSetMembers()) {
+            const content = await fs.readFile(localPath, 'utf-8').catch(() => null);
+
+            if (content === null) return;   // an incomplete set is not worth a record
+
+            digests[key] = this.digestOf(content);
+        }
+
+        await this.writeJson(config.paths.workingSetProvenance, {
+            digests,
             publishedAt: new Date().toISOString()
         });
     }
@@ -509,6 +555,8 @@ class Storage extends Base {
      * @returns {Promise<void>}
      */
     async updateUsers(newRecords) {
+        await this.hydrateWorkingSet();
+
         const current = await this.getUsers();
         const map     = new Map(current.map(r => [r.l, r])); // 'l' is login
         let changed   = false;
@@ -563,6 +611,8 @@ class Storage extends Base {
      * @returns {Promise<Boolean>} True if any were removed.
      */
     async deleteUsers(logins) {
+        await this.hydrateWorkingSet();
+
         const current    = await this.getUsers();
         const targets    = new Set(logins.map(l => l.toLowerCase()));
         const initialLen = current.length;
@@ -637,8 +687,12 @@ class Storage extends Base {
         // (`saveUsers`, the prune path, and Cleanup's reconciliation), and provenance that only some
         // of them update is worse than none — a stale digest reads as a foreign artifact and would
         // send every subsequent run down the fallback path for a reason nobody could find.
-        if (path === config.paths.users) {
-            await this.recordIndexProvenance(content);
+        // Any member changing re-stamps the WHOLE set, because the record is set-scoped: a per-file
+        // stamp could be partially current, which describes a state no reader may act on.
+        // `workingSetProvenance` itself is excluded, or recording would recurse.
+        if (path !== config.paths.workingSetProvenance &&
+            this.workingSetMembers().some(member => member.path === path)) {
+            await this.recordWorkingSetProvenance();
         }
     }
 }

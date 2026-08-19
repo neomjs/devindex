@@ -432,7 +432,13 @@ class Storage extends Base {
         }
 
         if (!manifest?.digests) {
-            console.warn('[Storage] No published manifest — adopting the fetched set unverified. Expected while this repository is not yet the publisher.');
+            console.warn(
+                '[Storage] No published manifest — adopting the fetched set UNVERIFIED.\n' +
+                `[Storage] This is no longer a transitional state: ${config.publishedWorkingSet.baseUrl} is neo's\n` +
+                '[Storage] `pages` copy, while this pipeline publishes to DEVINDEX_PUBLISH_BUCKET. The read side and\n' +
+                '[Storage] the write side name different artifacts, so nothing this run produces is read by the next\n' +
+                '[Storage] one, and the sync cursors reset every time. Point baseUrl at the published set to close it.'
+            );
         }
 
         // Written only after EVERY member fetched and verified, so a failure part-way through leaves
@@ -447,9 +453,13 @@ class Storage extends Base {
     /**
      * @summary Fetches the published manifest, or null when the publication carries none.
      *
-     * Null is not an error: while `neomjs/neo` is still the publisher there is no manifest beside the
-     * set, and the caller adopts unverified. A manifest appears the first time THIS repository
-     * publishes, and verification becomes live from then on without any code change.
+     * Null is not an error, but it no longer means what it did. It was written for the handover
+     * window in which `neomjs/neo` was still the publisher and no manifest sat beside the set, with
+     * verification expected to become live the first time THIS repository published. This repository
+     * now publishes — to `DEVINDEX_PUBLISH_BUCKET`, with a manifest — and verification is still not
+     * live, because `config.publishedWorkingSet.baseUrl` still resolves to neo's `pages` copy. So a
+     * null here currently reports that the read and write sides name different artifacts, not that
+     * the publisher has yet to appear. Whoever closes that loop should expect this to stop firing.
      * @param {String} baseUrl
      * @param {Number} timeout
      * @returns {Promise<Object|null>}

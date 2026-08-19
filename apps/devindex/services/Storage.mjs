@@ -711,18 +711,15 @@ class Storage extends Base {
     /**
      * @summary Writes a file through a temp-and-rename, creating the data directory when it is absent.
      *
-     * **The `mkdir` is the load-bearing part, and it is needed because git cannot express an empty
-     * directory.** While the working set was committed, `apps/devindex/resources/data/` existed on
-     * every checkout as a side effect of the files inside it. Untracking them removed the directory
-     * along with them, so the first scheduled run on that tree died in `ensureFiles` with `ENOENT`
-     * on `users.jsonl.tmp` — before a single collection stage ran. Measured 2026-08-19 on run
-     * 32276538403; the full run that had "verified" this path two hours earlier ran the previous
-     * tree, where seven files still held the directory open.
+     * **The `mkdir` is load-bearing, because git cannot express an empty directory.** While the
+     * working set was committed, `apps/devindex/resources/data/` existed on every checkout as a side
+     * effect of the files inside it. Now that the set is delivered rather than versioned, a clean
+     * checkout has no such directory at all — and `ensureFiles()` runs before anything has fetched
+     * one, so the first write on a fresh machine is also the write that must create it.
      *
-     * The guarantee sits at the WRITE rather than in `initAsync`, because the failure was a writer
-     * running where the directory did not exist — and an init hook is something a later caller can
-     * bypass, while this is not. Both writers in this class shared the idiom, so they now share
-     * the fix rather than each carrying its own copy to forget.
+     * The guarantee sits at the WRITE rather than in `initAsync`, so that reaching a writer by any
+     * other path cannot bypass it. Both writers in this class shared the temp-and-rename idiom, so
+     * they now share one implementation of it.
      *
      * Temp-and-rename is what makes the write atomic for a concurrent reader: `users.jsonl` is
      * ~23 MiB, and a torn write parses as far as its last complete line — presenting as missing

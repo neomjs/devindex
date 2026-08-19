@@ -115,12 +115,11 @@ by naming them explicitly.
     [Storage](./Storage.md#the-working-set-derived-delivered-never-versioned) — this is the single most
     important invariant in the pipeline, and the reason `neomjs/neo`'s `.git` is 5.2 GB.
 
-    ⚠️ **The round trip does not close yet, and it is the reason two sync cursors look frozen.**
-    `config.publishedWorkingSet.baseUrl` still resolves to `neomjs/neo`'s `pages` copy, while the
-    publish step writes to the content-plane prefix. A run therefore adopts one artifact and publishes
-    a different one, so nothing it decides survives into the next run — including `optin-sync.json`,
-    which has not advanced since 2026-03-29. Tracked as neomjs/neo#17394, where it turns out to have a
-    privacy consequence rather than just a stale-data one. Read that before changing anything here.
+    ⚠️ **The round trip does not close yet.** `config.publishedWorkingSet.baseUrl` still resolves to
+    `neomjs/neo`'s `pages` copy while the publish step writes to the content-plane prefix, so a run
+    reads one artifact and writes another and its decisions do not carry into the next run — which is
+    why `optin-sync.json` still reads its March value. Tracked in neomjs/neo#17394; read that before
+    changing anything on this path.
 
 ### Cadence
 

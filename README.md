@@ -90,6 +90,21 @@ npm run server-start
 
 Then open `apps/devindex/index.html`. For the Data Factory CLI (`spider`, `update`, `optin`, `optout`, `cleanup`) see [The Data Factory](./learn/data-factory/Intro.md); it needs a GitHub token in `.env`.
 
+### The contributor index is fetched, not cloned
+
+`npm install` downloads the published index (~10 MB gzipped, about a second) to
+`apps/devindex/resources/data/users.jsonl`. The app then reads it from disk, same-origin — so it is
+exactly as fast as a committed file, and your clone stays 14 MB instead of growing by 23 MB every
+hour. Refresh it whenever you want newer data:
+
+```bash
+npm run devindex:pull-data
+```
+
+If you install offline the grid starts empty and prints that command; nothing else breaks. The data
+is regenerated hourly and never versioned, so a stale local copy is fine for development — the
+pipeline fetches and digest-verifies the current index on every run regardless of what you have.
+
 ```bash
 npm run test-unit
 ```

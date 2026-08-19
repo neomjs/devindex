@@ -70,6 +70,19 @@ jobs:
       # ran under a different identity and had no reason to die with an enrichment credential. In this
       # repository every stage needs this token, so a failed mint means there is no work to do — and a
       # green run that collected nothing is the failure mode this whole ticket is about.
+      #
+      # THREE measured failure modes, and they point at different things — read the message, not the
+      # step name, because all three surface as a red mint:
+      #
+      #   "'Issuer' claim ('iss') must be an Integer"       -> APP ID is not a bare integer.
+      #        Measured here 2026-08-19, run 32252194883: the Client ID had been stored instead of the
+      #        App ID. They sit adjacent on the App settings page and the Client ID begins `Iv`. This
+      #        one fails while BUILDING the JWT, so it says nothing about the key or the installation
+      #        — the private key is not implicated and should not be rotated chasing it.
+      #   "Not Found"                                        -> a named repository has no installation.
+      #   "The permissions requested are not granted..."     -> the grant is missing on the App.
+      #
+      # The last two are neo's, recorded on runs 31879164402 and 31877595849 respectively.
       - name: Mint Intake installation token
         id: intake-token
         uses: actions/create-github-app-token@v3

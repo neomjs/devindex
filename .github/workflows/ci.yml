@@ -1,0 +1,89 @@
+name: CI
+
+# ## Why this exists, stated plainly: the suite had no observer
+#
+# This repository shipped a production outage on 2026-08-19 (run 32276538403) that its own test suite
+# would have caught — because nothing ran the suite. `data-sync-pipeline.yml` was the only workflow
+# here, and it runs the pipeline rather than the tests. 49 specs existed and executed exclusively on
+# whichever maintainer happened to run them locally.
+#
+# `check-data-tracking` was in a worse state: defined in `package.json`, wired to nothing at all. No
+# husky hook, no workflow. It is the guard that keeps the derived working set out of git, which is the
+# entire reason this repository's `.git` is 14 MB where neo's is 4.1 GB — and until now the only thing
+# enforcing it was somebody remembering to type it.
+#
+# A guard nobody runs is not a guard. Both now have a trigger.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    permissions:
+      # Read-only by construction. This job builds nothing, publishes nothing and touches no
+      # credential — unlike `data-sync-pipeline.yml`, which needs an App token and WIF.
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      # Matches `data-sync-pipeline.yml`. This repository declares no `engines`, so the pipeline's
+      # pin is the only evidence about what these services are known to run under, and CI disagreeing
+      # with the runtime that actually executes them would make a green here mean less than it looks.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      # No `playwright install`. The unit config declares no `webServer` and launches no browser —
+      # these are pure-Node specs driven by the Playwright runner, so downloading Chromium would cost
+      # a minute per run to exercise nothing.
+      - name: Install dependencies
+        run: npm ci
+
+      # FIRST, and deliberately before the tests: this is the cheap assertion, and a repository that
+      # has started committing the working set again is a fact worth learning in seconds rather than
+      # after the suite.
+      - name: Assert no derived data is tracked
+        run: npm run check-data-tracking
+
+      # `--project=unit` EXCLUDES `unit-profiling`, and both halves of that are deliberate.
+      #
+      # The two profiling specs `readFileSync` the real `apps/devindex/resources/data/users.jsonl`,
+      # which is gitignored and whose `postinstall` fetch skips when CI is set — so they cannot pass
+      # here without downloading ~10 MB per run. More importantly they SHOULD not run here: both
+      # assert wall-clock budgets, and the config's own comment records that a shared, contended CPU
+      # has been observed doubling the store-filter measurement. That reports as a product regression
+      # which does not exist. They are machine-local profiling tools, not correctness tests.
+      #
+      # `--fail-on-flaky-tests` is the honest-observer half. The config sets `retries: 2` under CI,
+      # and a Playwright retry runs in a FRESH worker — so any cross-file leak heals on retry and
+      # reports as flaky-but-passed, i.e. green. That is not hypothetical: the spec added alongside
+      # this workflow leaked through the shared working-set manifest and passed serially while
+      # failing under parallel workers. Without this flag CI would have called that a pass.
+      #
+      # Expect 47 tests. A project name that matches nothing exits 0 with "0 passed", so a sudden
+      # collapse in that number is a selector defect, not a smaller suite.
+      - name: Unit tests
+        run: npx playwright test -c test/playwright/playwright.config.unit.mjs --project=unit --fail-on-flaky-tests
+
+      # `if: failure()` rather than `always()`: on a green run nobody opens it, and the report carries
+      # traces from retried tests that are only interesting once something went wrong.
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: test/playwright/test-results/unit/
+          retention-days: 7

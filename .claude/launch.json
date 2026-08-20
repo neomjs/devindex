@@ -4,7 +4,7 @@
         {
             "name": "devindex-dev-server",
             "runtimeExecutable": "npm",
-            "runtimeArgs": ["--prefix", "/Users/Shared/github/neomjs/devindex", "run", "server-start"],
+            "runtimeArgs": ["run", "server-start"],
             "port": 8080,
             "autoPort": true
         }

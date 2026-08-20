@@ -16,14 +16,21 @@ import { measureJankInBrowser } from '../utils/browser-test-helpers.mjs';
  * 2. **The measurement is commented out.** `measureJankInBrowser` is injected into the page and never
  *    invoked; the callback returns a literal instead.
  *
- * The result was previously published as a `benchmark-native-horizontal` annotation. A skip constant
- * carried under a benchmark type is worse than no benchmark: it reads as a datum in the report and
- * cannot move, so nothing about it can ever fail.
+ * The result was previously published as a `benchmark-native-horizontal` annotation on a **passing**
+ * test. A skip constant carried under a benchmark type is worse than no benchmark: it reads as a
+ * datum in the report and cannot move, so nothing about it can ever fail.
+ *
+ * So the horizontal cases are now marked `fixme` when the skip fires, and are reported as **known
+ * missing coverage** rather than as passes. Renaming the annotation was not enough and was the wrong
+ * repair: a skipped operation cannot witness completion under any label.
+ *
+ * The `fixme` is conditional and evaluated inside the test rather than at declaration, so the
+ * `beforeEach` stream-stop assertions still execute and can still fail — those exercise the app for
+ * real and are the only genuine coverage this file currently carries.
  *
  * Left dormant rather than repaired here. Re-pointing the scroll target and re-enabling the
  * instrument is a behaviour change, and shipping one inside a repository migration would hide it
- * under a move. The `beforeEach` stream-stop assertions are real and still run, which is what this
- * file honestly is today.
+ * under a move.
  */
 
 const viewports = [
@@ -117,13 +124,26 @@ viewports.forEach(({ name, width, height }) => {
                 return { success: true }; // await measurementPromise;
             });
 
-            console.log(`[${name}] Native Horizontal (completion only, no timing):`, scrollResult);
+            console.log(`[${name}] Native Horizontal:`, scrollResult);
 
-            // Annotated as `witness`, not `benchmark`. `scrollResult` is the constant `{success: true}`
-            // while the jank measurement above is dormant, and a constant published under a benchmark
-            // type reads as a datum in the report while being incapable of moving.
+            // Reported as dormant rather than passing. The scroll target is wrong, so this case
+            // returns before moving anything — and a skipped operation is MISSING COVERAGE, not
+            // evidence. Passing it green (under any annotation name) is the false-green this file's
+            // docblock diagnoses; renaming the annotation does not make a skip into a witness.
+            //
+            // `fixme` is evaluated here rather than at declaration so the `beforeEach` stream-stop
+            // assertions — which are real and do exercise the app — still run and can still fail.
+            test.fixme(
+                scrollResult.skipped === true,
+                `Native horizontal scroll did not execute: ${scrollResult.reason}. ` +
+                '`.neo-grid-container` is not the horizontal scroll container — the grid moves ' +
+                'through its own scroll manager and a custom scrollbar. Repairing the target and ' +
+                're-enabling `measureJankInBrowser` is a behaviour change and belongs in its own ' +
+                'reviewable commit, not inside a repository migration.'
+            );
+
             test.info().annotations.push({
-                type       : 'witness-native-horizontal-scroll-completed',
+                type       : 'benchmark-native-horizontal',
                 description: JSON.stringify({ viewport: name, ...scrollResult })
             });
         });

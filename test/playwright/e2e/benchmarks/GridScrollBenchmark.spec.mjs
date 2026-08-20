@@ -1,6 +1,31 @@
 import { test, expect }         from '@playwright/test';
 import { measureJankInBrowser } from '../utils/browser-test-helpers.mjs';
 
+/**
+ * @summary Witness that the data stream stops. **It does not benchmark, and it does not scroll.**
+ *
+ * Measured on the current tree, not inferred — this file is vacuous in two independent ways, and
+ * both predate the move to this repository (the same code and the same condition are on the engine's
+ * `dev`):
+ *
+ * 1. **The scroll never happens.** The horizontal case reads `maxScroll` off `.neo-grid-container`,
+ *    but that element is not the scroll container — the grid drives horizontal movement through its
+ *    own scroll manager and a custom scrollbar, so `scrollWidth - clientWidth` is `0` and the body
+ *    returns `{skipped: true, reason: 'Not scrollable'}` before touching anything. Verified at every
+ *    viewport, Mobile through Desktop.
+ * 2. **The measurement is commented out.** `measureJankInBrowser` is injected into the page and never
+ *    invoked; the callback returns a literal instead.
+ *
+ * The result was previously published as a `benchmark-native-horizontal` annotation. A skip constant
+ * carried under a benchmark type is worse than no benchmark: it reads as a datum in the report and
+ * cannot move, so nothing about it can ever fail.
+ *
+ * Left dormant rather than repaired here. Re-pointing the scroll target and re-enabling the
+ * instrument is a behaviour change, and shipping one inside a repository migration would hide it
+ * under a move. The `beforeEach` stream-stop assertions are real and still run, which is what this
+ * file honestly is today.
+ */
+
 const viewports = [
     { name: 'Mobile',  width: 375,  height: 667 },
     { name: 'Laptop',  width: 1366, height: 768 },
@@ -92,9 +117,13 @@ viewports.forEach(({ name, width, height }) => {
                 return { success: true }; // await measurementPromise;
             });
 
-            console.log(`[${name}] Native Horizontal:`, scrollResult);
+            console.log(`[${name}] Native Horizontal (completion only, no timing):`, scrollResult);
+
+            // Annotated as `witness`, not `benchmark`. `scrollResult` is the constant `{success: true}`
+            // while the jank measurement above is dormant, and a constant published under a benchmark
+            // type reads as a datum in the report while being incapable of moving.
             test.info().annotations.push({
-                type       : 'benchmark-native-horizontal',
+                type       : 'witness-native-horizontal-scroll-completed',
                 description: JSON.stringify({ viewport: name, ...scrollResult })
             });
         });

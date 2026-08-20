@@ -9,11 +9,8 @@ import {activeLaunchArgs, requiresGlProbe}  from './e2e/utils/gpuIntent.mjs';
  *
  * The header runs an OffscreenCanvas animation, and the `Activity (17y)` column runs one **per
  * mounted cell** — twenty to forty concurrent animations at a normal viewport, on top of a 50,000
- * record grid. Every spec here measures that: two are wall-clock benchmarks, the other three drive
- * real pointer gestures against it. Under the presenting profile they would run with no GPU-intent
- * flags and with the frame-rate limiter on, so a jank measurement would report the vsync cap and a
- * canvas-heavy scroll would be rasterized without acceleration. The numbers would look perfectly
- * healthy and mean nothing.
+ * record grid. That workload is present in every spec here regardless of what the spec asserts, so
+ * the GPU-intent flags apply to all of them and `e2e/gl.setup.mjs` gates on their taking effect.
  *
  * The engine repository's opposite default is equally correct for it: most of its e2e suite is
  * functional, and `--disable-frame-rate-limit` suppresses headed compositing on retina hosts, which
@@ -21,6 +18,12 @@ import {activeLaunchArgs, requiresGlProbe}  from './e2e/utils/gpuIntent.mjs';
  *
  * Set `NEO_E2E_ENGINE_PROFILE=0` to opt back into presenting — needed only if a spec here ever
  * starts capturing frames, which none currently does.
+ *
+ * **What evidences which flag class, because the two are easy to conflate.** The GPU-intent flags are
+ * proven by the GL gate reporting `state=accelerated` on a real renderer — never by a timing. Frame
+ * scheduling is proven by `GridProfile`'s own CPU breakdown, which reports roughly six times the
+ * Scripting total uncapped (Mobile 815 → 4902 ms, Laptop 913 → 5310 ms). That is more work SAMPLED
+ * in the same window, not slower work, and it is precisely why the two axes are split below.
  */
 process.env.NEO_E2E_ENGINE_PROFILE ??= '1';
 
@@ -52,18 +55,53 @@ const __filename   = fileURLToPath(import.meta.url),
  * collection workflow fetches the index itself. So under CI there is no data, the body renders no
  * rows, and all eleven cases fail for a reason that has nothing to do with the code.
  *
- * Two of them are also wall-clock benchmarks. `.github/workflows/ci.yml` already records the same
+ * `GridProfile` also emits wall-clock CPU totals. `.github/workflows/ci.yml` already records the same
  * hazard one job up, excluding the profiling specs because a shared runner can double their budget —
  * "a regression report for something that did not regress". That reasoning applies here harder, not
  * less. The engine repository reaches the same conclusion by the same route: nothing in its
  * workflows runs its e2e suite either.
  *
  * This is a local / pre-merge suite. Run it before touching the grid, the store or the scroll path.
+ *
+ * ## Provenance of `e2e/utils/gpuIntent.mjs`, `e2e/utils/glState.mjs`, `e2e/gl.setup.mjs`
+ *
+ * Byte-identical copies of the engine's, taken deliberately as a **temporary bridge**, not adopted as
+ * a fork. They are generic browser-policy code with no DevIndex knowledge in them, and duplicating
+ * generic policy is how two repositories quietly diverge on what "accelerated" means.
+ *
+ * **Retirement trigger:** the moment `neo.mjs` publishes a test-support surface that exports them —
+ * or any consumer beyond this repository needs the same trio. Whoever hits either should delete these
+ * three files and import instead. Until then the duplication is the cheaper of two bad options,
+ * because the alternative is this suite having no acceleration gate at all.
  */
-const browserProject = {
-    name: 'chromium',
-    use : {channel: 'chrome', launchOptions: {args: launchArgs}}
-};
+/**
+ * Acceleration and frame scheduling are two axes, and only one of them is demanded.
+ *
+ * The operator's requirement is full GPU support — that is the GPU-intent flags, and it applies to
+ * everything here, because the header canvas and the per-mounted-cell `Activity` canvases are
+ * present in every spec regardless of what the spec asserts.
+ *
+ * `--disable-frame-rate-limit` is a different claim. Uncapping the compositor is right for a
+ * profiler that wants to see the engine's real work rate, and wrong for a gesture spec that asserts
+ * what a user would observe: a drag measured on an uncapped compositor is no longer representative
+ * of the capped browser everyone actually runs. So the functional specs stay capped and only the
+ * measurement project uncaps.
+ *
+ * Both share the same GPU-intent flags, so the GL gate below covers both.
+ */
+const CAPPED_ARGS = launchArgs.filter(arg => arg !== '--disable-frame-rate-limit'),
+
+      functionalProject = {
+          name      : 'chromium',
+          testMatch : /e2e[\\/]grid[\\/].*\.spec\.mjs$/,
+          use       : {channel: 'chrome', launchOptions: {args: CAPPED_ARGS}}
+      },
+
+      benchmarkProject = {
+          name      : 'benchmark',
+          testMatch : /e2e[\\/]benchmarks[\\/].*\.spec\.mjs$/,
+          use       : {channel: 'chrome', launchOptions: {args: launchArgs}}
+      };
 
 export default defineConfig({
     testDir      : path.join(__dirname, 'e2e'),
@@ -86,7 +124,6 @@ export default defineConfig({
         // `playwright install`, so the bundled chromium is absent on a fresh checkout and the run
         // fails at launch with a missing-executable error that looks like a config fault.
         channel      : 'chrome',
-        launchOptions: {args: launchArgs},
         trace        : 'on-first-retry',
         viewport     : {width: 1920, height: 1080}
     },
@@ -116,9 +153,8 @@ export default defineConfig({
         name     : 'gl-probe',
         testMatch: /gl\.setup\.mjs$/,
         use      : {channel: 'chrome', launchOptions: {args: launchArgs}}
-    }, {
-        ...browserProject,
-        testIgnore  : /gl\.setup\.mjs$/,
-        dependencies: ['gl-probe']
-    }] : [{...browserProject, testIgnore: /gl\.setup\.mjs$/}]
+    },
+        {...functionalProject, dependencies: ['gl-probe']},
+        {...benchmarkProject,  dependencies: ['gl-probe']}
+    ] : [functionalProject, benchmarkProject]
 });

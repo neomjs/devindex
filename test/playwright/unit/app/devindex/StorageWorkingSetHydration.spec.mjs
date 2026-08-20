@@ -48,14 +48,26 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
     // filesystem at all, which is what makes the cause easy to misread as flake.
     test.describe.configure({mode: 'serial'});
 
-    const MANIFEST_FILE = config.paths.workingSetManifest.slice(config.paths.workingSetManifest.lastIndexOf('/') + 1);
+    const MANIFEST_FILE = config.paths.workingSetManifest.slice(config.paths.workingSetManifest.lastIndexOf('/') + 1),
 
-    let originalFetch, originalWriteAtomic, writes;
+          // Captured at collection time, which is the only moment this file has not already shadowed
+          // the singleton — `beforeEach` installs the stub before any test body runs, so a reading
+          // taken inside a test would compare the stub against itself and pass regardless.
+          PRISTINE_HAS_OWN = Object.hasOwn(Storage, 'writeAtomic'),
+          PRISTINE_METHOD  = Storage.writeAtomic;
+
+    let originalFetch, writeAtomicDescriptor, writes;
 
     test.beforeEach(() => {
-        originalFetch       = globalThis.fetch;
-        originalWriteAtomic = Storage.writeAtomic.bind(Storage);
-        writes              = [];
+        originalFetch = globalThis.fetch;
+        writes        = [];
+
+        // The DESCRIPTOR, not the function. `writeAtomic` is inherited from the prototype, so
+        // `Storage.writeAtomic.bind(Storage)` followed by an assignment back does not restore
+        // anything — it converts an inherited method into an OWN property holding a bound copy with
+        // a different identity, and leaves that on the singleton for every later spec in the process.
+        // Capturing the descriptor lets teardown put the object back in the state it was found.
+        writeAtomicDescriptor = Object.getOwnPropertyDescriptor(Storage, 'writeAtomic') ?? null;
 
         // Adoption is observed rather than performed: the property under test is WHICH writes happen
         // and whether any happen at all, not what lands on disk. `StorageWriteDirectory.spec.mjs`
@@ -70,8 +82,16 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
     });
 
     test.afterEach(() => {
-        globalThis.fetch    = originalFetch;
-        Storage.writeAtomic = originalWriteAtomic;
+        globalThis.fetch = originalFetch;
+
+        if (writeAtomicDescriptor) {
+            Object.defineProperty(Storage, 'writeAtomic', writeAtomicDescriptor)
+        } else {
+            // There was no own property before, so removing this file's shadow is what restores the
+            // inherited method — with its original identity, not an equivalent copy.
+            delete Storage.writeAtomic
+        }
+
         delete Storage.hydration
     });
 
@@ -210,6 +230,27 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
         } finally {
             console.warn = originalWarn
         }
+    });
+
+    test('this file leaves the Storage singleton exactly as it found it', async () => {
+        // The isolation itself, asserted rather than assumed. Every case here shadows a method on a
+        // module singleton, and the failure mode is silent: a teardown that assigns an equivalent
+        // function back still leaves an OWN property where an inherited one was, which the next spec
+        // in the process inherits. This case runs the full teardown path and checks the object, not
+        // the behaviour — equivalent call behaviour is exactly what hid the problem.
+        stubNetwork();
+        await Storage.hydrateWorkingSet();
+
+        // Mirror exactly what afterEach does, so the assertion covers the real restore path rather
+        // than a re-implementation of it.
+        writeAtomicDescriptor
+            ? Object.defineProperty(Storage, 'writeAtomic', writeAtomicDescriptor)
+            : delete Storage.writeAtomic;
+
+        expect(Object.hasOwn(Storage, 'writeAtomic'), 'ownership is restored, not merely re-assigned')
+            .toBe(PRISTINE_HAS_OWN);
+        expect(Storage.writeAtomic, 'the ORIGINAL method identity is restored, not an equivalent copy')
+            .toBe(PRISTINE_METHOD)
     });
 
     test('hydration runs once per process, however many callers ask for it', async () => {

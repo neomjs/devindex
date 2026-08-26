@@ -38,6 +38,16 @@ jobs:
       - name: Assert no derived data is tracked
         run: npm run check-data-tracking
 
+      # `npm ci` above ran the postinstall linker, so this asserts the projection actually happened
+      # rather than re-doing it: both skill surfaces point at the installed package, and no skill
+      # byte is tracked here. An `--ignore-scripts` install resolves the dependency without linking
+      # anything, and this is what makes that state red instead of silently fine.
+      #
+      # No path filter, and no workflow of its own: a path-filtered workflow reports *pending* on
+      # PRs that miss the filter, which can never satisfy a required check.
+      - name: Assert the skill substrate is projected, not copied
+        run: npx --no-install neo-agent-skills-materialize --check
+
       # `--project=unit` excludes `unit-profiling`. Those two specs read the real `users.jsonl`, which
       # is gitignored and whose fetch skips under CI, and they assert wall-clock budgets that a shared
       # runner can double — a regression report for something that did not regress.

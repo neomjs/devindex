@@ -1,0 +1,17 @@
+# DevIndex owns only the event trigger and immutable Skills coordinate. The called workflow owns
+# base admission and materialization, so their implementation cannot drift in this consumer.
+
+name: Shared PR Baseline
+
+permissions:
+  contents: read
+
+# Deliberately unfiltered: once these jobs become required contexts, every PR must emit a terminal
+# result. The called PR-base job rejects an unsupported base instead of leaving a context pending.
+on:
+  pull_request:
+
+jobs:
+  baseline:
+    name: Shared PR Baseline
+    uses: neomjs/neo-agent-skills/.github/workflows/reusable-pr-baseline.yml@72965ba56b43e898d566af97f8ab277b28beb96b

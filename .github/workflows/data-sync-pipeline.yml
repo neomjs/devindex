@@ -65,13 +65,13 @@ jobs:
 
       # Nothing here pushes or compares SHAs, so no history is needed.
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
       # This repository declares no `engines`; 24 is the version these services are known to run under.
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 

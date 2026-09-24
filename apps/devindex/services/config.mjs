@@ -197,7 +197,14 @@ const defaultConfig = {
          * work from while a mixed one is not.
          * @type {string}
          */
-        workingSetManifest: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-manifest.json')
+        workingSetManifest: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-manifest.json'),
+
+        /**
+         * The workflow run whose first process hydrated this checkout. Local and never published: it lets
+         * the later stages of one run keep what the earlier ones wrote.
+         * @type {string}
+         */
+        hydratedRun: path.resolve(projectRoot, 'apps/devindex/resources/data/hydrated-run.txt')
     },
 
     /**
@@ -216,25 +223,16 @@ const defaultConfig = {
      */
     publishedWorkingSet: {
         /**
-         * Base URL the working set is fetched from. Declared once; the three filenames are derived
-         * from `paths` rather than restated, so a rename cannot desynchronise the fetch from the write.
+         * The PUBLIC copy of the working set: what a developer's `devindex:pull-data` fetches, and what
+         * seeds the store once while it has published nothing. The pipeline itself reads the store it
+         * publishes to (`Storage#workingSetSource`). Filenames are derived from `paths`, never restated.
          *
-         * **Still points at what neo publishes**, because that is where all three are served from
-         * today — verified: `users.jsonl`, `tracker.json` and `visited.json` each return 200 from this
-         * base, since `neomjs/pages` carries the whole `node_modules/neo.mjs/` tree and the Cloud Run
-         * middleware proxies it. So the READ side is already live; only publishing is not.
-         *
-         * That is why `working-set-provenance.json` ships with `digests: null`. While neo is still the
-         * publisher, this repository cannot hold a digest for bytes it did not write — neo's next
-         * hourly run would invalidate it and every hydration would reject. A null record takes the
-         * documented absence branch instead, adopting the published set unverified, which is exactly
-         * the hand-off this migration needs. The first run that PUBLISHES writes real digests and
-         * verification becomes live from then on.
-         *
-         * When the destination is chosen this one literal changes and nothing else does.
+         * Pinned to `neomjs/pages@1847ca65`, the last set published before the store's objects were
+         * deleted (2026-08-30), because the unpinned `neomjs.com` copy disappears with the next `pages`
+         * rebuild. It carries no manifest, so adopting it is unverified by construction.
          * @type {string}
          */
-        baseUrl: 'https://neomjs.com/node_modules/neo.mjs/apps/devindex/resources/data/',
+        baseUrl: 'https://raw.githubusercontent.com/neomjs/pages/1847ca65b7a28e01f7e569490f50f14ef26f6a0a/node_modules/neo.mjs/apps/devindex/resources/data/',
 
         /**
          * Request timeout in ms, per file. Generous: the index alone is ~23 MiB and a slow fetch that

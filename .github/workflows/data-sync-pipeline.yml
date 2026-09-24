@@ -37,6 +37,11 @@ jobs:
       # short-lived access token, which is why no Google credential is stored here.
       id-token: write
 
+    # A repository variable: the destination is a bucket id, not a credential, and keeping it unmasked is
+    # what makes a failed publish readable in the log. The stages read it too, to hydrate from the store.
+    env:
+      DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET }}
+
     steps:
       # The Intake App is installed on the two intake repositories, not on this one, so they are named.
       #
@@ -89,46 +94,16 @@ jobs:
             gh api "repos/neomjs/$repo" --jq '"reachable: \(.full_name)"'
           done
 
-      - name: Report probe-only run
-        if: ${{ github.event_name != 'schedule' && !inputs.run_collection }}
-        run: echo "run_collection was not set — credential probe only, no collection performed."
-
-      # The ORDER is a privacy guarantee: opt-in and opt-out are processed before discovery and
-      # enrichment, so somebody who asked to be removed cannot be indexed by the Spider in the same
-      # run that honoured the request.
-      - name: DevIndex Opt-In
-        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
-        env:
-          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
-        run: npm run devindex:optin
-
-      - name: DevIndex Opt-Out
-        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
-        env:
-          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
-        run: npm run devindex:optout
-
-      - name: DevIndex Spider
-        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
-        env:
-          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
-        run: npm run devindex:spider -- --strategy random
-
-      # The 200-candidate argument is a ceiling, not a promise: GraphQL cost admission may allow fewer.
-      - name: DevIndex Updater
-        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
-        env:
-          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
-        run: npm run devindex:update
-
       # Keyless, and NOT gated on `run_collection`: a probe that cannot exercise the publish credential
-      # checks only half the pipeline, and WIF authentication has no side effects.
-      #
+      # checks only half the pipeline, and WIF authentication has no side effects. It runs BEFORE the stages
+      # because they hydrate from the store with its access token.
       - name: Authenticate to Google Cloud
+        id: gcp-auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
           service_account: ${{ secrets.PUBLISH_SA_EMAIL }}
+          token_format: access_token
 
       - name: Setup Cloud SDK
         uses: google-github-actions/setup-gcloud@v3
@@ -137,22 +112,21 @@ jobs:
       # identity can see the destination. A binding on the wrong bucket authenticates perfectly and
       # fails at the first write.
       - name: Probe publish access
-        env:
-          # A repository variable: the destination is a bucket id, not a credential, and keeping it
-          # unmasked is what makes a failed publish readable in the log.
-          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET }}
         run: |
           set -euo pipefail
           if [ -z "${DEVINDEX_PUBLISH_BUCKET}" ]; then
             echo "::error::DEVINDEX_PUBLISH_BUCKET is not set. Add it as a repository variable."
             exit 1
           fi
-          # The two failures mean different things: a 403 on `getAccessToken` is impersonation being
-          # refused, usually IAM propagation, while a 403 on `storage.objects.list` is the bucket grant.
-          # The first resolves itself; the second never will, so the output is classified rather than
-          # collapsed into one message.
+          # Three outcomes, classified rather than collapsed. A listing that matches nothing is a
+          # destination this identity CAN read that holds nothing yet — the state before the first
+          # publish, which the publish below repairs; failing it would keep the store empty forever.
+          # A 403 on `getAccessToken` is impersonation being refused, usually IAM propagation, while a
+          # 403 on `storage.objects.list` is the bucket grant: the first resolves itself, the second never will.
           if OUT=$(gcloud storage ls "${DEVINDEX_PUBLISH_BUCKET}/" 2>&1); then
             echo "Publish identity can read the destination."
+          elif echo "$OUT" | grep -q "matched no objects"; then
+            echo "Publish identity can read the destination; it holds nothing yet."
           elif echo "$OUT" | grep -q "impersonated credentials\|getAccessToken"; then
             echo "::error::Impersonation refused. If the binding was just created, wait a few minutes and re-run. If it persists, the binding or the provider condition is wrong."
             echo "$OUT" | head -5
@@ -163,8 +137,43 @@ jobs:
             exit 1
           fi
 
-      - name: Publish the working set
+      - name: Report probe-only run
+        if: ${{ github.event_name != 'schedule' && !inputs.run_collection }}
+        run: echo "run_collection was not set — credential probe only, no collection performed."
+
+      # The ORDER is a privacy guarantee: opt-in and opt-out are processed before discovery and
+      # enrichment, so somebody who asked to be removed cannot be indexed by the Spider in the same
+      # run that honoured the request. The first stage hydrates from the store; the later ones keep
+      # what the earlier ones wrote (`Storage#hydrateOncePerRun`).
+      - name: DevIndex Opt-In
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         env:
-          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET }}
+          DEVINDEX_STORE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:optin
+
+      - name: DevIndex Opt-Out
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
+        env:
+          DEVINDEX_STORE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:optout
+
+      - name: DevIndex Spider
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
+        env:
+          DEVINDEX_STORE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:spider -- --strategy random
+
+      # The 200-candidate argument is a ceiling, not a promise: GraphQL cost admission may allow fewer.
+      - name: DevIndex Updater
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
+        env:
+          DEVINDEX_STORE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+          GH_TOKEN: ${{ steps.intake-token.outputs.token }}
+        run: npm run devindex:update
+
+      - name: Publish the working set
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         run: node ./buildScripts/publishWorkingSet.mjs

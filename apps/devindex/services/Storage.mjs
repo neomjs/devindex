@@ -362,7 +362,7 @@ class Storage extends Base {
     }
 
     /**
-     * @summary Fetches the published working set onto disk, once per process, before anything reads it.
+     * @summary Fetches the published working set onto disk, once per run, before anything reads it.
      *
      * **The three derived files are one object.** Every run reads all three, mutates all three and
      * writes all three — `Cleanup` alone rewrites the lot before every command. Fetching them
@@ -377,34 +377,110 @@ class Storage extends Base {
      * the fetched copy while another sees the checkout copy. The alternative — memoising parsed
      * objects — would leave `updateVisited`, which reads its path directly, on the old data.
      *
+     * **Once per run, not per process.** The collection workflow runs each stage as its own process, and a
+     * second adoption overwrites what the stages before it wrote: an opt-out recorded by OptOut would be gone
+     * before Spider starts. So inside a workflow run the first hydration marks the run, and later processes of
+     * the same run keep the local set. Outside one — a developer's checkout, a test — every process hydrates.
+     *
      * Runs before the first access rather than on demand, for the same reason: hydration WRITES, so it
      * has to happen while the local files are still untouched by this run.
      * @returns {Promise<void>}
      */
     async hydrateWorkingSet() {
-        this.hydration ??= this.fetchAndAdoptWorkingSet();
+        this.hydration ??= this.hydrateOncePerRun();
         return this.hydration
     }
 
     /**
-     * @summary Fetches all three derived files, verifies them as one set, and adopts them together.
+     * @summary Adopts the working set unless an earlier process of this workflow run already did.
+     *
+     * The run is marked whatever the adoption's outcome: a run decides its starting state once, and a later
+     * stage must not work from a different one than the stages before it.
+     * @returns {Promise<void>}
+     * @private
+     */
+    async hydrateOncePerRun() {
+        const {GITHUB_RUN_ATTEMPT, GITHUB_RUN_ID} = process.env,
+              run = GITHUB_RUN_ID ? `${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}` : null;
+
+        if (run && await this.readHydratedRun() === run) {
+            console.log(`[Storage] The working set was hydrated earlier in run ${run}; keeping this run's local writes.`);
+            return
+        }
+
+        await this.fetchAndAdoptWorkingSet();
+
+        run && await this.writeAtomic(config.paths.hydratedRun, run)
+    }
+
+    /**
+     * @summary The run the last hydration in this checkout marked, or null.
+     * @returns {Promise<String|null>}
+     * @private
+     */
+    async readHydratedRun() {
+        try {
+            return (await fs.readFile(config.paths.hydratedRun, 'utf-8')).trim()
+        } catch (error) {
+            return null
+        }
+    }
+
+    /**
+     * @summary Where the working set is read from. A run holding the store's credentials — the bucket
+     * `DEVINDEX_PUBLISH_BUCKET` names and a short-lived `DEVINDEX_STORE_TOKEN` — reads the store it publishes
+     * to, over the GCS endpoint. Any other process, a developer's checkout or a test, reads the public copy.
+     * @returns {{baseUrl: String, headers: Object, store: Boolean}}
+     * @private
+     */
+    workingSetSource() {
+        const {DEVINDEX_PUBLISH_BUCKET: bucket, DEVINDEX_STORE_TOKEN: token} = process.env;
+
+        if (bucket && token) {
+            return {
+                baseUrl: `https://storage.googleapis.com/${bucket.replace(/^gs:\/\//, '').replace(/\/$/, '')}/`,
+                headers: {Authorization: `Bearer ${token}`},
+                store  : true
+            }
+        }
+
+        return {baseUrl: config.publishedWorkingSet.baseUrl, headers: {}, store: false}
+    }
+
+    /**
+     * @summary Fetches every member, verifies them as one set, and adopts them together.
+     *
+     * A store that has never published — its manifest is a definite 404 — is seeded once from the public
+     * copy, and the first publish replaces the seed. Any other failure to read the store's manifest adopts
+     * nothing: seeding over a store that merely failed to answer would roll the index back to the seed.
      * @returns {Promise<void>}
      * @private
      */
     async fetchAndAdoptWorkingSet() {
         const
-            {baseUrl, timeout} = config.publishedWorkingSet,
-            members            = this.workingSetMembers(),
-            manifest           = await this.fetchManifest(baseUrl, timeout),
-            fetched            = {};
+            {timeout} = config.publishedWorkingSet,
+            members   = this.workingSetMembers(),
+            fetched   = {};
+
+        let source             = this.workingSetSource(),
+            {manifest, status} = await this.fetchManifest(source, timeout);
+
+        if (source.store && status === 404) {
+            console.warn(`[Storage] The store has published nothing yet — seeding once from ${config.publishedWorkingSet.baseUrl}.`);
+
+            source = {baseUrl: config.publishedWorkingSet.baseUrl, headers: {}, store: false};
+            ({manifest} = await this.fetchManifest(source, timeout))
+        } else if (source.store && status !== 200) {
+            return this.rejectWorkingSet(`the store's manifest could not be read (${status || 'no response'})`)
+        }
 
         for (const {key, file, path: localPath} of members) {
-            const url = `${baseUrl}${file}`;
+            const url = `${source.baseUrl}${file}`;
 
             let response, text;
 
             try {
-                response = await fetch(url, {signal: AbortSignal.timeout(timeout)});
+                response = await fetch(url, {headers: source.headers, signal: AbortSignal.timeout(timeout)});
 
                 if (!response.ok) {
                     return this.rejectWorkingSet(`HTTP ${response.status} for ${file}`)
@@ -432,13 +508,7 @@ class Storage extends Base {
         }
 
         if (!manifest?.digests) {
-            console.warn(
-                '[Storage] No published manifest — adopting the fetched set UNVERIFIED.\n' +
-                `[Storage] This is no longer a transitional state: ${config.publishedWorkingSet.baseUrl} is neo's\n` +
-                '[Storage] `pages` copy, while this pipeline publishes to DEVINDEX_PUBLISH_BUCKET. The read side and\n' +
-                '[Storage] the write side name different artifacts, so nothing this run produces is read by the next\n' +
-                '[Storage] one, and the sync cursors reset every time. Point baseUrl at the published set to close it.'
-            );
+            console.warn(`[Storage] ${source.baseUrl} carries no manifest — adopting the fetched set UNVERIFIED.`)
         }
 
         // Written only after EVERY member fetched and verified, so a failure part-way through leaves
@@ -451,31 +521,22 @@ class Storage extends Base {
     }
 
     /**
-     * @summary Fetches the published manifest, or null when the publication carries none.
-     *
-     * Null is not an error, but it no longer means what it did. It was written for the handover
-     * window in which `neomjs/neo` was still the publisher and no manifest sat beside the set, with
-     * verification expected to become live the first time THIS repository published. This repository
-     * now publishes — to `DEVINDEX_PUBLISH_BUCKET`, with a manifest — and verification is still not
-     * live, because `config.publishedWorkingSet.baseUrl` still resolves to neo's `pages` copy. So a
-     * null here currently reports that the read and write sides name different artifacts, not that
-     * the publisher has yet to appear. Whoever closes that loop should expect this to stop firing.
-     * @param {String} baseUrl
+     * @summary Fetches a source's manifest, with the status that decides what its absence means: the store's
+     * 404 is a store that never published, while the public copy carries no manifest at all.
+     * @param {Object} source  See {@link #workingSetSource}
      * @param {Number} timeout
-     * @returns {Promise<Object|null>}
+     * @returns {Promise<{manifest: (Object|null), status: Number}>} `status` is 0 when nothing parseable answered
      * @private
      */
-    async fetchManifest(baseUrl, timeout) {
+    async fetchManifest({baseUrl, headers}, timeout) {
         const file = config.paths.workingSetManifest.slice(config.paths.workingSetManifest.lastIndexOf('/') + 1);
 
         try {
-            const response = await fetch(`${baseUrl}${file}`, {signal: AbortSignal.timeout(timeout)});
+            const response = await fetch(`${baseUrl}${file}`, {headers, signal: AbortSignal.timeout(timeout)});
 
-            if (!response.ok) return null;
-
-            return JSON.parse(await response.text())
+            return {manifest: response.ok ? JSON.parse(await response.text()) : null, status: response.status}
         } catch (error) {
-            return null
+            return {manifest: null, status: 0}
         }
     }
 

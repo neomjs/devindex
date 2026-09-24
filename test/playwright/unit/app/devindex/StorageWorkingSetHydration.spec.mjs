@@ -56,11 +56,18 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
           PRISTINE_HAS_OWN = Object.hasOwn(Storage, 'writeAtomic'),
           PRISTINE_METHOD  = Storage.writeAtomic;
 
-    let originalFetch, writeAtomicDescriptor, writes;
+    // The run and the store credentials select what hydration does, and GitHub Actions sets the run for
+    // this very suite. Cleared for every case and restored after, so no case inherits its runner's run.
+    const SELECTORS = ['DEVINDEX_PUBLISH_BUCKET', 'DEVINDEX_STORE_TOKEN', 'GITHUB_RUN_ATTEMPT', 'GITHUB_RUN_ID'];
+
+    let originalEnv, originalFetch, writeAtomicDescriptor, writes;
 
     test.beforeEach(() => {
+        originalEnv   = Object.fromEntries(SELECTORS.map(key => [key, process.env[key]]));
         originalFetch = globalThis.fetch;
         writes        = [];
+
+        SELECTORS.forEach(key => delete process.env[key]);
 
         // The DESCRIPTOR, not the function. `writeAtomic` is inherited from the prototype, so
         // `Storage.writeAtomic.bind(Storage)` followed by an assignment back does not restore
@@ -83,6 +90,9 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
 
     test.afterEach(() => {
         globalThis.fetch = originalFetch;
+
+        SELECTORS.forEach(key => originalEnv[key] === undefined ? delete process.env[key] : process.env[key] = originalEnv[key]);
+        delete Storage.readHydratedRun;
 
         if (writeAtomicDescriptor) {
             Object.defineProperty(Storage, 'writeAtomic', writeAtomicDescriptor)
@@ -265,5 +275,102 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
         const expected = Storage.workingSetMembers().length + 1; // members + the manifest
 
         expect(calls.length, 'three callers, one network pass').toBe(expected)
+    });
+
+    test('a run holding the store credentials reads the store it publishes to, authenticated and verified', async () => {
+        const digests = {};
+
+        Storage.workingSetMembers().forEach(({key}) => {digests[key] = Storage.digestOf('ok')});
+
+        process.env.DEVINDEX_PUBLISH_BUCKET = 'gs://neomjs-middleware-dist/devindex';
+        process.env.DEVINDEX_STORE_TOKEN    = 'short-lived';
+
+        const calls = stubNetwork({manifest: {digests}, member: () => ({text: 'ok'})});
+
+        await Storage.hydrateWorkingSet();
+
+        calls.forEach(({url, init}) => {
+            expect(url.startsWith('https://storage.googleapis.com/neomjs-middleware-dist/devindex/'), url).toBe(true);
+            expect(init.headers.Authorization).toBe('Bearer short-lived')
+        });
+
+        expect(writes.length, 'the verified set is adopted').toBe(Storage.workingSetMembers().length)
+    });
+
+    test('a store that never published is seeded once from the public copy, and the log says so', async () => {
+        const warnings = [], originalWarn = console.warn;
+
+        console.warn = (...args) => warnings.push(args.join(' '));
+
+        try {
+            process.env.DEVINDEX_PUBLISH_BUCKET = 'gs://neomjs-middleware-dist/devindex';
+            process.env.DEVINDEX_STORE_TOKEN    = 'short-lived';
+
+            const calls     = stubNetwork({manifest: null, member: () => ({text: 'ok'})}),
+                  {baseUrl} = config.publishedWorkingSet;
+
+            await Storage.hydrateWorkingSet();
+
+            expect(calls[0].url.startsWith('https://storage.googleapis.com/'), 'the store is asked first').toBe(true);
+            calls.slice(1).forEach(({url}) => expect(url.startsWith(baseUrl), `then the public copy: ${url}`).toBe(true));
+            expect(warnings.join('\n')).toContain('seeding once from');
+            expect(writes.length, 'the seed is adopted').toBe(Storage.workingSetMembers().length)
+        } finally {
+            console.warn = originalWarn
+        }
+    });
+
+    test('a store that fails to answer adopts nothing, and never falls back to the seed', async () => {
+        process.env.DEVINDEX_PUBLISH_BUCKET = 'gs://neomjs-middleware-dist/devindex';
+        process.env.DEVINDEX_STORE_TOKEN    = 'short-lived';
+
+        const calls = [];
+
+        globalThis.fetch = async url => {
+            calls.push(url);
+            return {ok: false, status: 503, text: async () => ''}
+        };
+
+        await Storage.hydrateWorkingSet();
+
+        expect(calls.length, 'only the store manifest is asked').toBe(1);
+        expect(writes, 'the local set is kept').toEqual([])
+    });
+
+    test('the first process of a workflow run marks the run it hydrated', async () => {
+        process.env.GITHUB_RUN_ID      = '7';
+        process.env.GITHUB_RUN_ATTEMPT = '1';
+        Storage.readHydratedRun        = async () => null;
+
+        stubNetwork();
+
+        await Storage.hydrateWorkingSet();
+
+        expect(writes.at(-1)).toEqual({localPath: config.paths.hydratedRun, text: '7-1'})
+    });
+
+    test('a later process of the same run keeps the earlier stages\' writes', async () => {
+        process.env.GITHUB_RUN_ID      = '7';
+        process.env.GITHUB_RUN_ATTEMPT = '1';
+        Storage.readHydratedRun        = async () => '7-1';
+
+        const calls = stubNetwork();
+
+        await Storage.hydrateWorkingSet();
+
+        expect(calls, 'nothing is fetched').toEqual([]);
+        expect(writes, 'nothing is overwritten').toEqual([])
+    });
+
+    test('a re-run attempt hydrates again, since its stages start over', async () => {
+        process.env.GITHUB_RUN_ID      = '7';
+        process.env.GITHUB_RUN_ATTEMPT = '2';
+        Storage.readHydratedRun        = async () => '7-1';
+
+        const calls = stubNetwork();
+
+        await Storage.hydrateWorkingSet();
+
+        expect(calls.length).toBe(Storage.workingSetMembers().length + 1)
     });
 });

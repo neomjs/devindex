@@ -223,9 +223,9 @@ const defaultConfig = {
      */
     publishedWorkingSet: {
         /**
-         * The PUBLIC copy of the working set: what a developer's `devindex:pull-data` fetches, and what
-         * seeds the store once while it has published nothing. The pipeline itself reads the store it
-         * publishes to (`Storage#workingSetSource`). Filenames are derived from `paths`, never restated.
+         * The frozen public copy of the working set, which seeds the store once while it has published nothing.
+         * The pipeline itself reads the store it publishes to (`Storage#workingSetSource`). Filenames are
+         * derived from `paths`, never restated.
          *
          * Pinned to `neomjs/pages@1847ca65`, the last set published before the store's objects were
          * deleted (2026-08-30), because the unpinned `neomjs.com` copy disappears with the next `pages`
@@ -241,7 +241,15 @@ const defaultConfig = {
          * @type {number}
          */
         timeout: 120000
-    }
+    },
+
+    /**
+     * The deployed site, served at `neomjs.com/devindex/` through the middleware. Its contributor index is the
+     * store's latest publish, so it is what a developer's `devindex:pull-data` reads, and the public base its
+     * deploy receipt records.
+     * @type {string}
+     */
+    publicSite: 'https://neomjs.github.io/devindex/'
 };
 
 /**

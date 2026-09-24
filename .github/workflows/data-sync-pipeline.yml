@@ -36,6 +36,8 @@ jobs:
       # Workload Identity Federation: the runner mints an OIDC token that GCP exchanges for a
       # short-lived access token, which is why no Google credential is stored here.
       id-token: write
+      # A publish dispatches the Pages workflow, so the site serves what was just published.
+      actions: write
 
     # A repository variable: the destination is a bucket id, not a credential, and keeping it unmasked is
     # what makes a failed publish readable in the log. The stages read it too, to hydrate from the store.
@@ -177,3 +179,10 @@ jobs:
       - name: Publish the working set
         if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
         run: node ./buildScripts/publishWorkingSet.mjs
+
+      # `workflow_dispatch` is one of the two events a GITHUB_TOKEN may start. A publish that failed never gets here.
+      - name: Redeploy the site
+        if: ${{ github.event_name == 'schedule' || inputs.run_collection }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "${{ github.repository }}" --ref dev

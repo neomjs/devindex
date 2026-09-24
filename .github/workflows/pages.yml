@@ -3,6 +3,7 @@ name: Pages
 # Builds the app against the published engine and deploys it as this repository's project site,
 # https://neomjs.github.io/devindex/, which the neomjs.com proxy serves at /devindex/. Nothing built is
 # committed: the site is an artifact of the run, and its deploy-receipt.json records what it was built from.
+# The contributor index is the one the data-sync pipeline published last; each publish dispatches this workflow.
 
 on:
   push:
@@ -18,7 +19,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The only job here that holds a store token, and it runs no npm: the publish identity can write the store, so no
+  # dependency's install script may share a process with it. It hands the build the index, verified.
+  data:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    outputs:
+      published-at: ${{ steps.fetch.outputs.published-at }}
+      source: ${{ steps.fetch.outputs.source }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Authenticate to the store
+        id: gcp-auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.PUBLISH_SA_EMAIL }}
+          token_format: access_token
+
+      - name: Fetch the published index
+        id: fetch
+        env:
+          DEVINDEX_PUBLISH_BUCKET: ${{ vars.DEVINDEX_PUBLISH_BUCKET }}
+          DEVINDEX_STORE_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+        run: node ./buildScripts/fetchStoreIndex.mjs _data
+
+      - name: Hand the index to the build
+        uses: actions/upload-artifact@v7
+        with:
+          name: contributor-index
+          path: _data/users.jsonl
+          retention-days: 1
+
   build:
+    needs: data
     runs-on: ubuntu-latest
 
     steps:
@@ -40,15 +88,17 @@ jobs:
       - name: Build
         run: npm run build-all -- -l no -p no
 
-      # The pull skips under CI, where the collection pipeline fetches the index itself. This deploy needs it, so
-      # CI is cleared for this step. The pull never fails the run on its own: the assembly below refuses an empty
-      # or missing index, so a failed fetch stops the deploy instead of publishing an empty grid.
-      - name: Pull the contributor index
-        env:
-          CI: ''
-        run: npm run devindex:pull-data
+      - name: Take the published index
+        uses: actions/download-artifact@v8
+        with:
+          name: contributor-index
+          path: apps/devindex/resources/data
 
+      # The assembly still refuses an empty index, and the receipt names the publish it shipped
       - name: Assemble the site
+        env:
+          DEVINDEX_DATA_PUBLISHED_AT: ${{ needs.data.outputs.published-at }}
+          DEVINDEX_DATA_SOURCE: ${{ needs.data.outputs.source }}
         run: node ./buildScripts/assemblePagesSite.mjs _site
 
       - name: Upload the site

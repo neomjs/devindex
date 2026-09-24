@@ -1,17 +1,22 @@
-# DevIndex owns only the event trigger and immutable Skills coordinate. The called workflow owns
-# base admission and materialization, so their implementation cannot drift in this consumer.
+# DevIndex owns only the event trigger, its permissions and the Skills release it calls. The called
+# workflow owns every job, so their implementation cannot drift in this consumer.
 
 name: Shared PR Baseline
 
+# The called PR-body job reads the pull request itself; a caller granting less fails at startup.
 permissions:
   contents: read
+  pull-requests: read
 
 # Deliberately unfiltered: once these jobs become required contexts, every PR must emit a terminal
 # result. The called PR-base job rejects an unsupported base instead of leaving a context pending.
+# `edited` re-runs the PR-body job on a body-only fix; GitHub's default types omit it.
 on:
   pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
 
 jobs:
   baseline:
     name: Shared PR Baseline
-    uses: neomjs/neo-agent-skills/.github/workflows/reusable-pr-baseline.yml@72965ba56b43e898d566af97f8ab277b28beb96b
+    # A published release tag, never a commit SHA; dependabot moves it on each release.
+    uses: neomjs/neo-agent-skills/.github/workflows/reusable-pr-baseline.yml@v0.1.17

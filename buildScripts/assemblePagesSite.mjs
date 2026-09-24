@@ -28,6 +28,9 @@ document.addEventListener('click', function(event) {
  * `basePath: '../../'` then names the mount from both sides. `<base>` also re-targets `#` links, so a click handler
  * keeps hash routes on the page, as the engine portal's root entry does.
  *
+ * The config also sets `isGitHubPages`, which the `pages` deployment sets for every site it builds. It keeps the
+ * development-only Neural Link client off a public page, where it can only fail to reach a local bridge.
+ *
  * The contributor index is required: a green build of an empty grid is not a deploy.
  * @param {Object} options
  * @param {String} options.build      The production build directory (`dist/production`)
@@ -65,7 +68,7 @@ export function assembleSite({build, dataFile, learnDir, imagesDir, out, publicB
 
     const config = JSON.parse(fs.readFileSync(path.join(appEntry, 'neo-config.json'), 'utf-8'));
 
-    fs.writeFileSync(path.join(out, 'dist/production/neo-config.json'), JSON.stringify({...config, basePath: '../../', workerBasePath: './'}));
+    fs.writeFileSync(path.join(out, 'dist/production/neo-config.json'), JSON.stringify({...config, basePath: '../../', isGitHubPages: true, workerBasePath: './'}));
     fs.writeFileSync(path.join(out, 'index.html'), rootEntry(fs.readFileSync(path.join(appEntry, 'index.html'), 'utf-8')));
 
     const written = {

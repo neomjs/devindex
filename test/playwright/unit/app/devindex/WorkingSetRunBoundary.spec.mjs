@@ -11,12 +11,18 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * The child's preload. Every working-set path moves into `DEVINDEX_TEST_DATA_DIR`, `fetch` serves the published
  * set from `DEVINDEX_TEST_PUBLISHED` (a JSON map of basename → body; the manifest answers 404), and the stage
  * bodies are replaced by the Storage calls a real stage makes first, per `DEVINDEX_TEST_STAGE`. Everything else —
- * `cli.mjs`, the Manager, Storage, the publisher — is the real code.
+ * `cli.mjs`, the Manager, Storage, the publisher — is the real code. The disk is slow, as on a CI runner: every
+ * `fs/promises.access` waits 30 ms, so Storage's `ensureFiles()` is still running when anything that skips its
+ * `ready()` reads the set (#37).
  */
 const PRELOAD = `
 import Neo       from '${REPO_ROOT}/node_modules/neo.mjs/src/Neo.mjs';
 import * as core from '${REPO_ROOT}/node_modules/neo.mjs/src/core/_export.mjs';
+import fsp       from 'fs/promises';
 import path      from 'path';
+
+const access = fsp.access;
+fsp.access = async (...args) => {await new Promise(resolve => setTimeout(resolve, 30)); return access(...args)};
 
 const {default: config} = await import('${REPO_ROOT}/apps/devindex/services/config.mjs');
 

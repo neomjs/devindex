@@ -60,6 +60,9 @@ async function publish() {
         )
     }
 
+    // Storage creates the members a checkout lacks in its init, one at a time: reading the set before `ready()` races it
+    await Storage.ready();
+
     const members = Storage.workingSetMembers();
 
     await assertNotCollapsed();

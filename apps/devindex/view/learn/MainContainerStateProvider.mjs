@@ -21,24 +21,13 @@ class MainContainerStateProvider extends StateProvider {
              * @member {String|null} data.contentPath=null
              */
             /*
-             * Origin-absolute ON PURPOSE — do not "restore" the `Neo.config.basePath +` prefix.
-             *
-             * `basePath` is `../../`, a DOCUMENT-relative path, and this value is consumed inside a
-             * Web Worker. Because `workerBasePath` points at `node_modules/neo.mjs/src/worker/`, a
-             * relative specifier resolved there climbs to `/node_modules/neo.mjs/` instead of the
-             * repository root — so content was fetched from inside the engine package. That failure
-             * is not symmetric: `learn/Introduction.md` does not exist there and 404s loudly, while
-             * `learn/tree.json` DOES exist there and returns the engine's own portal tree with a 200.
-             *
-             * A leading slash sidesteps the whole question: it ignores whatever base resolves it, so
-             * the worker and the document agree by construction rather than by coincidence. Inside
-             * the engine's repository they agree anyway, which is why this never surfaced there.
-             *
-             * The bound this carries: it assumes the app is served from the origin root. Deploying
-             * under a sub-path (a GitHub Pages project site at `/devindex/`) makes this one string
-             * to update — and that belongs to the deployment-target decision, not here.
+             * `basePath` is document-relative but read inside a worker. In development the worker runs from
+             * `node_modules/neo.mjs/src/worker/`, where a relative climb lands in the engine package (whose own
+             * `learn/tree.json` answers 200), so development reads the origin-absolute `/learn/`. A built site is
+             * mounted under a sub-path, and its entry serves page and workers from one base
+             * (`buildScripts/assemblePagesSite.mjs`), so there `basePath` names the mount from both sides.
              */
-            contentPath: '/learn/',
+            contentPath: Neo.config.environment === 'development' ? '/learn/' : Neo.config.basePath + 'learn/',
             /**
              * @member {Number|null} data.countPages=null
              */

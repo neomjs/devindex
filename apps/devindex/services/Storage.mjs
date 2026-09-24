@@ -517,8 +517,8 @@ class Storage extends Base {
 
             const digest = this.digestOf(text);
 
-            // Absence of a record is not mismatch. A deployment that has never published has nothing
-            // to compare against, and treating that as tampering would make this path unreachable.
+            // Only the public copy arrives here without digests: a store without them was refused above,
+            // and the public copy carries none by construction.
             if (manifest?.digests) {
                 if (manifest.digests[key] !== digest) {
                     return this.rejectWorkingSet(
@@ -535,8 +535,8 @@ class Storage extends Base {
             console.warn(`[Storage] ${source.baseUrl} carries no manifest — adopting the fetched set UNVERIFIED.`)
         }
 
-        // Written only after EVERY member fetched and verified, so a failure part-way through leaves
-        // the local set exactly as it was rather than half-replaced.
+        // Written only after EVERY member fetched, and matched its digest where there is one, so a failure
+        // part-way through leaves the local set exactly as it was rather than half-replaced.
         for (const {text, localPath} of Object.values(fetched)) {
             await this.writeAtomic(localPath, text);
         }

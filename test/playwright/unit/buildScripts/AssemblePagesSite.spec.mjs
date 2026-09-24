@@ -65,7 +65,7 @@ test.describe('buildScripts/assemblePagesSite', () => {
         expect(index).toContain('href="apps/devindex/resources/images/neo_logo_favicon.svg"');
         expect(index).toContain('window.location.hash = target.getAttribute(\'href\')');
 
-        expect(config).toMatchObject({appPath: 'apps/devindex/app.mjs', basePath: '../../', mainPath: '../main.js', workerBasePath: './'});
+        expect(config).toMatchObject({appPath: 'apps/devindex/app.mjs', basePath: '../../', isGitHubPages: true, mainPath: '../main.js', workerBasePath: './'});
 
         expect(fs.readFileSync(path.join(out, 'apps/devindex/resources/data/users.jsonl'), 'utf-8')).toBe('{"l":"a"}\n{"l":"b"}\n');
         expect(fs.existsSync(path.join(out, 'learn/tree.json'))).toBe(true);

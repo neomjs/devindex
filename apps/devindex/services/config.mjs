@@ -177,8 +177,8 @@ const defaultConfig = {
          * Manifest for the published WORKING SET: one SHA-256 per derived file, written together.
          *
          * **Set-scoped rather than per-file, because a partial match is the dangerous outcome.**
-         * The three derived files are one working set: every run reads all three, mutates all three
-         * and writes all three. Verifying them independently would let a run proceed with an index
+         * The nine members (`Storage#workingSetMembers`) are one working set, read, mutated and written
+         * as one state. Verifying them independently would let a run proceed with an index
          * from one generation and a tracker from another — and `tracker.json` decides who gets
          * enriched, so a torn read makes the scheduler skip users that are stale and re-enrich users
          * that are not, while every log line stays green.
@@ -192,49 +192,47 @@ const defaultConfig = {
          * So it ships WITH the set and is derived rather than trusted. What it still catches: a torn
          * or partial publication, a file that failed to propagate, and any mixing of generations —
          * the operational failures that actually occur. What it can no longer catch: a wholesale,
-         * internally consistent overwrite of all four objects. That is the accepted cost, stated
+         * internally consistent overwrite of the whole set. That is the accepted cost, stated
          * rather than implied, and it is the right trade because a consistently stale set is safe to
          * work from while a mixed one is not.
          * @type {string}
          */
-        workingSetManifest: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-manifest.json')
+        workingSetManifest: path.resolve(projectRoot, 'apps/devindex/resources/data/working-set-manifest.json'),
+
+        /**
+         * The workflow run whose first process hydrated this checkout. Local and never published: it lets
+         * the later stages of one run keep what the earlier ones wrote.
+         * @type {string}
+         */
+        hydratedRun: path.resolve(projectRoot, 'apps/devindex/resources/data/hydrated-run.txt')
     },
 
     /**
      * The published working set, read rather than re-derived.
      *
-     * **These three files are one object with one lifecycle, not a deliverable plus some state.**
-     * Every run reads all three, mutates all three and writes all three. `users.jsonl` is the only one
-     * a browser ever sees, which made it tempting to treat the other two as lesser — but by history
-     * cost they are the same problem: in `neomjs/neo` the three carry 40.06 GB, 3.76 GB and 1.38 GB of
-     * blob bytes respectively, and `tracker.json` has MORE commits than the index does. Sizing them by
-     * their on-disk bytes rather than their commit rate is what made them look cheap.
+     * **The nine members are one object with one lifecycle, not a deliverable plus some state.**
+     * `users.jsonl` is the only one a browser ever sees, which made it tempting to treat the rest as
+     * lesser — but by history cost the big three are the same problem: in `neomjs/neo` the index, the
+     * tracker and the visited log carry 40.06 GB, 3.76 GB and 1.38 GB of blob bytes respectively, and
+     * `tracker.json` has MORE commits than the index does. The small ones carry the privacy state: the
+     * blocklist and the opt-in/opt-out cursors.
      *
-     * So they travel together: fetched together, verified together, published together. There is no
+     * So they travel together: fetched together, verified where the source carries digests, published together. There is no
      * bootstrap phase — the first run in this repository is simply the next iteration of a loop that
      * has been turning hourly elsewhere.
      */
     publishedWorkingSet: {
         /**
-         * Base URL the working set is fetched from. Declared once; the three filenames are derived
-         * from `paths` rather than restated, so a rename cannot desynchronise the fetch from the write.
+         * The PUBLIC copy of the working set: what a developer's `devindex:pull-data` fetches, and what
+         * seeds the store once while it has published nothing. The pipeline itself reads the store it
+         * publishes to (`Storage#workingSetSource`). Filenames are derived from `paths`, never restated.
          *
-         * **Still points at what neo publishes**, because that is where all three are served from
-         * today — verified: `users.jsonl`, `tracker.json` and `visited.json` each return 200 from this
-         * base, since `neomjs/pages` carries the whole `node_modules/neo.mjs/` tree and the Cloud Run
-         * middleware proxies it. So the READ side is already live; only publishing is not.
-         *
-         * That is why `working-set-provenance.json` ships with `digests: null`. While neo is still the
-         * publisher, this repository cannot hold a digest for bytes it did not write — neo's next
-         * hourly run would invalidate it and every hydration would reject. A null record takes the
-         * documented absence branch instead, adopting the published set unverified, which is exactly
-         * the hand-off this migration needs. The first run that PUBLISHES writes real digests and
-         * verification becomes live from then on.
-         *
-         * When the destination is chosen this one literal changes and nothing else does.
+         * Pinned to `neomjs/pages@1847ca65`, the last set published before the store's objects were
+         * deleted (2026-08-30), because the unpinned `neomjs.com` copy disappears with the next `pages`
+         * rebuild. It carries no manifest, so adopting it is unverified by construction.
          * @type {string}
          */
-        baseUrl: 'https://neomjs.com/node_modules/neo.mjs/apps/devindex/resources/data/',
+        baseUrl: 'https://raw.githubusercontent.com/neomjs/pages/1847ca65b7a28e01f7e569490f50f14ef26f6a0a/node_modules/neo.mjs/apps/devindex/resources/data/',
 
         /**
          * Request timeout in ms, per file. Generous: the index alone is ~23 MiB and a slow fetch that

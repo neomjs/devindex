@@ -4,6 +4,9 @@ import path                           from 'path';
 import {spawnSync}                    from 'child_process';
 import {fileURLToPath, pathToFileURL} from 'url';
 
+// The directory the learn view's `contentPath` names, relative to the site root
+const LEARN = 'learn';
+
 const HASH_LINKS = `<script>
 document.addEventListener('click', function(event) {
     let {target} = event;
@@ -27,15 +30,21 @@ document.addEventListener('click', function(event) {
  *
  * The contributor index is required: a green build of an empty grid is not a deploy.
  * @param {Object} options
- * @param {String} options.build     The production build directory (`dist/production`)
- * @param {String} options.dataFile  The pulled `users.jsonl`
- * @param {String} options.learnDir  The guides the learn view reads
- * @param {String} options.imagesDir The workspace images the app references
- * @param {String} options.out       The site directory to create; replaced when it exists
- * @param {Object} options.receipt   Provenance written to `deploy-receipt.json`, e.g. commit and data source
- * @returns {Object} The receipt as written, with `dataRecords` and `dataDigest` added
+ * @param {String} options.build      The production build directory (`dist/production`)
+ * @param {String} options.dataFile   The pulled `users.jsonl`
+ * @param {String} options.learnDir   The guides the learn view reads
+ * @param {String} options.imagesDir  The workspace images the app references
+ * @param {String} options.out        The site directory to create; replaced when it exists
+ * @param {String} options.publicBase The mount the site is served at, with its trailing slash
+ * @param {Object} options.receipt    Provenance written to `deploy-receipt.json`, e.g. commit and data source
+ * @returns {Object} The receipt as written, with `publicBase`, `contentBase`, `dataRecords` and `dataDigest` added
  */
-export function assembleSite({build, dataFile, learnDir, imagesDir, out, receipt}) {
+export function assembleSite({build, dataFile, learnDir, imagesDir, out, publicBase, receipt}) {
+    // Without the slash, URL resolution drops the mount's last segment and every base in the receipt leaves the site
+    if (!publicBase?.endsWith('/')) {
+        throw new Error(`the public base \`${publicBase}\` must end with a slash`)
+    }
+
     const
         appEntry = path.join(build, 'apps/devindex'),
         data     = fs.existsSync(dataFile) ? fs.readFileSync(dataFile) : null,
@@ -48,7 +57,7 @@ export function assembleSite({build, dataFile, learnDir, imagesDir, out, receipt
     fs.rmSync(out, {force: true, recursive: true});
 
     fs.cpSync(build,     path.join(out, 'dist/production'), {recursive: true});
-    fs.cpSync(learnDir,  path.join(out, 'learn'),           {recursive: true});
+    fs.cpSync(learnDir,  path.join(out, LEARN),             {recursive: true});
     fs.cpSync(imagesDir, path.join(out, 'resources/images'), {recursive: true});
 
     fs.mkdirSync(path.join(out, 'apps/devindex/resources/data'), {recursive: true});
@@ -59,7 +68,13 @@ export function assembleSite({build, dataFile, learnDir, imagesDir, out, receipt
     fs.writeFileSync(path.join(out, 'dist/production/neo-config.json'), JSON.stringify({...config, basePath: '../../', workerBasePath: './'}));
     fs.writeFileSync(path.join(out, 'index.html'), rootEntry(fs.readFileSync(path.join(appEntry, 'index.html'), 'utf-8')));
 
-    const written = {...receipt, dataDigest: createHash('sha256').update(data).digest('hex'), dataRecords: records};
+    const written = {
+        ...receipt,
+        contentBase: new URL(`${LEARN}/`, publicBase).href,
+        dataDigest : createHash('sha256').update(data).digest('hex'),
+        dataRecords: records,
+        publicBase
+    };
 
     fs.writeFileSync(path.join(out, 'deploy-receipt.json'), JSON.stringify(written, null, 4));
 
@@ -97,16 +112,16 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
         {default: config} = await import('../apps/devindex/services/config.mjs'),
         dataFile          = config.paths.users,
         receipt           = assembleSite({
-            build    : path.join(root, 'dist/production'),
+            build     : path.join(root, 'dist/production'),
             dataFile,
-            imagesDir: path.join(root, 'resources/images'),
-            learnDir : path.join(root, 'learn'),
-            out      : path.join(root, process.argv[2] || '_site'),
-            receipt  : {
+            imagesDir : path.join(root, 'resources/images'),
+            learnDir  : path.join(root, 'learn'),
+            out       : path.join(root, process.argv[2] || '_site'),
+            publicBase: 'https://neomjs.github.io/devindex/',
+            receipt   : {
                 commit    : process.env.GITHUB_SHA || spawnSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf-8'}).stdout.trim(),
                 dataSource: `${config.publishedWorkingSet.baseUrl}${path.basename(dataFile)}`,
-                neoVersion: JSON.parse(fs.readFileSync(path.join(root, 'node_modules/neo.mjs/package.json'), 'utf-8')).version,
-                publicBase: 'https://neomjs.github.io/devindex/'
+                neoVersion: JSON.parse(fs.readFileSync(path.join(root, 'node_modules/neo.mjs/package.json'), 'utf-8')).version
             }
         });
 

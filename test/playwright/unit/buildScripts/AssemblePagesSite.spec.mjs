@@ -29,11 +29,12 @@ function fixture(users) {
 
     return {
         build,
-        dataFile : path.join(dir, 'users.jsonl'),
-        imagesDir: path.join(dir, 'images'),
-        learnDir : path.join(dir, 'learn'),
-        out      : path.join(dir, '_site'),
-        receipt  : {commit: 'abc123'}
+        dataFile  : path.join(dir, 'users.jsonl'),
+        imagesDir : path.join(dir, 'images'),
+        learnDir  : path.join(dir, 'learn'),
+        out       : path.join(dir, '_site'),
+        publicBase: 'https://example.test/devindex/',
+        receipt   : {commit: 'abc123'}
     }
 }
 
@@ -70,9 +71,19 @@ test.describe('buildScripts/assemblePagesSite', () => {
         expect(fs.existsSync(path.join(out, 'learn/tree.json'))).toBe(true);
         expect(fs.existsSync(path.join(out, 'resources/images/logo.svg'))).toBe(true);
 
-        expect(receipt).toMatchObject({commit: 'abc123', dataRecords: 2});
+        expect(receipt).toMatchObject({commit: 'abc123', contentBase: 'https://example.test/devindex/learn/', dataRecords: 2, publicBase: 'https://example.test/devindex/'});
         expect(receipt.dataDigest).toMatch(/^[0-9a-f]{64}$/);
-        expect(JSON.parse(fs.readFileSync(path.join(out, 'deploy-receipt.json'), 'utf-8'))).toEqual(receipt)
+        expect(JSON.parse(fs.readFileSync(path.join(out, 'deploy-receipt.json'), 'utf-8'))).toEqual(receipt);
+
+        // The receipt's content base is the one the learn view fetches: its `basePath + 'learn/'`, from where the workers run
+        expect(new URL(`${config.basePath}learn/`, new URL('dist/production/', receipt.publicBase)).href).toBe(receipt.contentBase)
+    });
+
+    test('a public base without its trailing slash is refused before anything is written', () => {
+        const options = {...fixture('{"l":"a"}\n'), publicBase: 'https://example.test/devindex'};
+
+        expect(() => assembleSite(options)).toThrow(/must end with a slash/);
+        expect(fs.existsSync(options.out)).toBe(false)
     });
 
     test('a build entry of another shape fails instead of shipping a page that loads nothing', () => {

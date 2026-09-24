@@ -177,8 +177,8 @@ const defaultConfig = {
          * Manifest for the published WORKING SET: one SHA-256 per derived file, written together.
          *
          * **Set-scoped rather than per-file, because a partial match is the dangerous outcome.**
-         * The three derived files are one working set: every run reads all three, mutates all three
-         * and writes all three. Verifying them independently would let a run proceed with an index
+         * The nine members (`Storage#workingSetMembers`) are one working set, read, mutated and written
+         * as one state. Verifying them independently would let a run proceed with an index
          * from one generation and a tracker from another — and `tracker.json` decides who gets
          * enriched, so a torn read makes the scheduler skip users that are stale and re-enrich users
          * that are not, while every log line stays green.
@@ -192,7 +192,7 @@ const defaultConfig = {
          * So it ships WITH the set and is derived rather than trusted. What it still catches: a torn
          * or partial publication, a file that failed to propagate, and any mixing of generations —
          * the operational failures that actually occur. What it can no longer catch: a wholesale,
-         * internally consistent overwrite of all four objects. That is the accepted cost, stated
+         * internally consistent overwrite of the whole set. That is the accepted cost, stated
          * rather than implied, and it is the right trade because a consistently stale set is safe to
          * work from while a mixed one is not.
          * @type {string}
@@ -210,14 +210,14 @@ const defaultConfig = {
     /**
      * The published working set, read rather than re-derived.
      *
-     * **These three files are one object with one lifecycle, not a deliverable plus some state.**
-     * Every run reads all three, mutates all three and writes all three. `users.jsonl` is the only one
-     * a browser ever sees, which made it tempting to treat the other two as lesser — but by history
-     * cost they are the same problem: in `neomjs/neo` the three carry 40.06 GB, 3.76 GB and 1.38 GB of
-     * blob bytes respectively, and `tracker.json` has MORE commits than the index does. Sizing them by
-     * their on-disk bytes rather than their commit rate is what made them look cheap.
+     * **The nine members are one object with one lifecycle, not a deliverable plus some state.**
+     * `users.jsonl` is the only one a browser ever sees, which made it tempting to treat the rest as
+     * lesser — but by history cost the big three are the same problem: in `neomjs/neo` the index, the
+     * tracker and the visited log carry 40.06 GB, 3.76 GB and 1.38 GB of blob bytes respectively, and
+     * `tracker.json` has MORE commits than the index does. The small ones carry the privacy state: the
+     * blocklist and the opt-in/opt-out cursors.
      *
-     * So they travel together: fetched together, verified together, published together. There is no
+     * So they travel together: fetched together, verified where the source carries digests, published together. There is no
      * bootstrap phase — the first run in this repository is simply the next iteration of a loop that
      * has been turning hourly elsewhere.
      */

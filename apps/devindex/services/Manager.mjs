@@ -133,8 +133,10 @@ class Manager extends Base {
                 await OptIn.run();
             });
 
-        // Initialize Services
+        // Initialize Services. The working set is hydrated before any command runs: a stage's first write can come
+        // before its first read (OptOut records an opt-out, then deletes), and a later hydration would overwrite it
         await Storage.ready();
+        await Storage.hydrateWorkingSet();
 
         await program.parseAsync(process.argv);
     }

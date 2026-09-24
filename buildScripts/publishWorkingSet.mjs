@@ -21,8 +21,8 @@ import Storage   from '../apps/devindex/services/Storage.mjs';
  * branch move" question. Porting it would inherit an answer to a question this architecture never
  * asks, and would tell the next reader that DevIndex commits somewhere.
  *
- * **Order matters and is the only real invariant here.** The manifest is written LAST, after all three
- * payload objects are uploaded. A reader that fetches a manifest is therefore reading one that
+ * **Order matters and is the only real invariant here.** The manifest is written LAST, after every
+ * member is uploaded. A reader that fetches a manifest is therefore reading one that
  * describes objects already present; the reverse order would advertise a set that is still arriving,
  * which is precisely the torn read `Storage.hydrateWorkingSet` refuses. Uploads are not transactional
  * — this ordering is what substitutes for that.
@@ -104,21 +104,30 @@ async function publish() {
  * behind it. Publishing to an object store replaces that with a 7-day soft-delete window, so a
  * corruption nobody notices inside a week is unrecoverable.
  *
- * So this compares what is about to be published against what was fetched at the start of the run and
- * refuses a large drop. Pruning is legitimate and bounded — the meritocracy cap evicts the tail — but
- * it evicts a few, not a fifth. The threshold is deliberately loose: this is a catastrophe brake, not
- * a quality gate, and a brake that fires on ordinary churn gets disabled.
+ * So this compares what is about to be published against what the run started from — the size its
+ * hydration recorded (`Storage#runStartCount`) — and refuses a large drop. Pruning is legitimate and
+ * bounded — the meritocracy cap evicts the tail — but it evicts a few, not a fifth. The threshold is
+ * deliberately loose: this is a catastrophe brake, not a quality gate, and a brake that fires on
+ * ordinary churn gets disabled.
  * @returns {Promise<void>}
  */
 async function assertNotCollapsed() {
+    if (process.env.DEVINDEX_ALLOW_INDEX_COLLAPSE) {
+        console.log('[publish] DEVINDEX_ALLOW_INDEX_COLLAPSE is set — skipping the collapse check.');
+        return
+    }
+
     const
         THRESHOLD = 0.8,
-        current   = (await fs.readFile(config.paths.users, 'utf-8').catch(() => '')).split('\n').filter(Boolean).length,
-        previous  = await fetchPublishedCount();
+        current   = await Storage.countIndex(),
+        previous  = await Storage.runStartCount();
 
-    if (!previous) {
-        console.log('[publish] No published index to compare against — skipping the collapse check.');
-        return
+    // No mark means this run never hydrated: there is no baseline, and publishing blind is what this guards
+    if (previous === null) {
+        throw new Error(
+            'Refusing to publish: this run left no run-start mark, so it never hydrated a working set to compare ' +
+            'against. Set DEVINDEX_ALLOW_INDEX_COLLAPSE=1 to publish without the check.'
+        )
     }
 
     if (current < previous * THRESHOLD) {
@@ -132,27 +141,6 @@ async function assertNotCollapsed() {
     }
 
     console.log(`[publish] Index size check: ${current.toLocaleString('en-US')} records (was ${previous.toLocaleString('en-US')}).`)
-}
-
-/**
- * @summary Record count of the currently published index, or null when there is none.
- * @returns {Promise<Number|null>}
- */
-async function fetchPublishedCount() {
-    if (process.env.DEVINDEX_ALLOW_INDEX_COLLAPSE) return null;
-
-    const {baseUrl, timeout} = config.publishedWorkingSet,
-          file               = config.paths.users.slice(config.paths.users.lastIndexOf('/') + 1);
-
-    try {
-        const response = await fetch(`${baseUrl}${file}`, {signal: AbortSignal.timeout(timeout)});
-
-        if (!response.ok) return null;
-
-        return (await response.text()).split('\n').filter(Boolean).length
-    } catch (error) {
-        return null
-    }
 }
 
 /**

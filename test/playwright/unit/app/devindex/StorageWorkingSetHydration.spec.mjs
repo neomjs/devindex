@@ -92,6 +92,7 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
         globalThis.fetch = originalFetch;
 
         SELECTORS.forEach(key => originalEnv[key] === undefined ? delete process.env[key] : process.env[key] = originalEnv[key]);
+        delete Storage.countIndex;
         delete Storage.readHydratedRun;
 
         if (writeAtomicDescriptor) {
@@ -337,22 +338,44 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
         expect(writes, 'the local set is kept').toEqual([])
     });
 
-    test('the first process of a workflow run marks the run it hydrated', async () => {
+    test('a store that answers without digests adopts nothing: the seed path is for a definite 404 only', async () => {
+        process.env.DEVINDEX_PUBLISH_BUCKET = 'gs://neomjs-middleware-dist/devindex';
+        process.env.DEVINDEX_STORE_TOKEN    = 'short-lived';
+
+        for (const body of ['{}', 'null', '{"digests":null}']) {
+            delete Storage.hydration;
+
+            const calls = [];
+
+            globalThis.fetch = async url => {
+                calls.push(url);
+                return {ok: true, status: 200, text: async () => url.endsWith(MANIFEST_FILE) ? body : 'ok'}
+            };
+
+            await Storage.hydrateWorkingSet();
+
+            expect(calls.length, `${body}: only the manifest is asked`).toBe(1);
+            expect(writes, `${body}: the local set is kept`).toEqual([])
+        }
+    });
+
+    test('the first process of a workflow run marks the run and the index size it starts from', async () => {
         process.env.GITHUB_RUN_ID      = '7';
         process.env.GITHUB_RUN_ATTEMPT = '1';
         Storage.readHydratedRun        = async () => null;
+        Storage.countIndex             = async () => 3;
 
         stubNetwork();
 
         await Storage.hydrateWorkingSet();
 
-        expect(writes.at(-1)).toEqual({localPath: config.paths.hydratedRun, text: '7-1'})
+        expect(writes.at(-1)).toEqual({localPath: config.paths.hydratedRun, text: JSON.stringify({run: '7-1', users: 3})})
     });
 
     test('a later process of the same run keeps the earlier stages\' writes', async () => {
         process.env.GITHUB_RUN_ID      = '7';
         process.env.GITHUB_RUN_ATTEMPT = '1';
-        Storage.readHydratedRun        = async () => '7-1';
+        Storage.readHydratedRun        = async () => ({run: '7-1', users: 3});
 
         const calls = stubNetwork();
 
@@ -365,7 +388,8 @@ test.describe('DevIndex Storage — hydrating the published working set', () => 
     test('a re-run attempt hydrates again, since its stages start over', async () => {
         process.env.GITHUB_RUN_ID      = '7';
         process.env.GITHUB_RUN_ATTEMPT = '2';
-        Storage.readHydratedRun        = async () => '7-1';
+        Storage.readHydratedRun        = async () => ({run: '7-1', users: 3});
+        Storage.countIndex             = async () => 3;
 
         const calls = stubNetwork();
 

@@ -364,12 +364,12 @@ class Storage extends Base {
     /**
      * @summary Fetches the published working set onto disk, once per run, before anything reads it.
      *
-     * **The three derived files are one object.** Every run reads all three, mutates all three and
-     * writes all three — `Cleanup` alone rewrites the lot before every command. Fetching them
-     * independently would let a run proceed with an index from one generation and a tracker from
-     * another, and `tracker.json` is what decides who gets enriched: a torn read makes the scheduler
-     * skip users that are stale and re-enrich users that are not, silently. So the set is verified as
-     * a unit and adopted all-or-nothing.
+     * **The nine members are one object** (`workingSetMembers`). A run reads, mutates and writes them
+     * as one state — `Cleanup` alone rewrites several of them before every command.
+     * Fetching them independently would let a run proceed with an index from one generation and a
+     * tracker from another, and `tracker.json` is what decides who gets enriched: a torn read makes the
+     * scheduler skip users that are stale and re-enrich users that are not, silently. So the set is
+     * adopted all-or-nothing, and verified wherever its source carries digests.
      *
      * **Materialised to disk rather than held in memory**, deliberately. Every existing reader and
      * writer already goes through `readJson`/`writeJson` on these paths; landing the fetched bytes
@@ -395,7 +395,8 @@ class Storage extends Base {
      * @summary Adopts the working set unless an earlier process of this workflow run already did.
      *
      * The run is marked whatever the adoption's outcome: a run decides its starting state once, and a later
-     * stage must not work from a different one than the stages before it.
+     * stage must not work from a different one than the stages before it. The mark records the index size the
+     * run starts from, which is the baseline the publisher's collapse check compares against.
      * @returns {Promise<void>}
      * @private
      */
@@ -403,27 +404,46 @@ class Storage extends Base {
         const {GITHUB_RUN_ATTEMPT, GITHUB_RUN_ID} = process.env,
               run = GITHUB_RUN_ID ? `${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}` : null;
 
-        if (run && await this.readHydratedRun() === run) {
+        if (run && (await this.readHydratedRun())?.run === run) {
             console.log(`[Storage] The working set was hydrated earlier in run ${run}; keeping this run's local writes.`);
             return
         }
 
         await this.fetchAndAdoptWorkingSet();
 
-        run && await this.writeAtomic(config.paths.hydratedRun, run)
+        run && await this.writeAtomic(config.paths.hydratedRun, JSON.stringify({run, users: await this.countIndex()}))
     }
 
     /**
-     * @summary The run the last hydration in this checkout marked, or null.
-     * @returns {Promise<String|null>}
+     * @summary The mark the last hydration in this checkout left, `{run, users}`, or null.
+     * @returns {Promise<Object|null>}
      * @private
      */
     async readHydratedRun() {
         try {
-            return (await fs.readFile(config.paths.hydratedRun, 'utf-8')).trim()
+            return JSON.parse(await fs.readFile(config.paths.hydratedRun, 'utf-8'))
         } catch (error) {
             return null
         }
+    }
+
+    /**
+     * @summary The index size this workflow run started from, or null outside a run or before its hydration.
+     * @returns {Promise<Number|null>}
+     */
+    async runStartCount() {
+        const {GITHUB_RUN_ATTEMPT, GITHUB_RUN_ID} = process.env,
+              mark = await this.readHydratedRun();
+
+        return GITHUB_RUN_ID && mark?.run === `${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}` ? mark.users : null
+    }
+
+    /**
+     * @summary The number of records in the local index.
+     * @returns {Promise<Number>}
+     */
+    async countIndex() {
+        return (await fs.readFile(config.paths.users, 'utf-8').catch(() => '')).split('\n').filter(Boolean).length
     }
 
     /**
@@ -448,11 +468,13 @@ class Storage extends Base {
     }
 
     /**
-     * @summary Fetches every member, verifies them as one set, and adopts them together.
+     * @summary Fetches every member and adopts them together — verified against the store's digests, or,
+     * from the public copy, unverified by construction, since it carries none.
      *
      * A store that has never published — its manifest is a definite 404 — is seeded once from the public
-     * copy, and the first publish replaces the seed. Any other failure to read the store's manifest adopts
-     * nothing: seeding over a store that merely failed to answer would roll the index back to the seed.
+     * copy, and the first publish replaces the seed. A store that answers anything else without complete
+     * digests adopts nothing: seeding or trusting over a store that merely failed to answer would roll the
+     * index back or accept an unverifiable set.
      * @returns {Promise<void>}
      * @private
      */
@@ -472,6 +494,8 @@ class Storage extends Base {
             ({manifest} = await this.fetchManifest(source, timeout))
         } else if (source.store && status !== 200) {
             return this.rejectWorkingSet(`the store's manifest could not be read (${status || 'no response'})`)
+        } else if (source.store && !manifest?.digests) {
+            return this.rejectWorkingSet('the store answered without digests, so its set cannot be verified')
         }
 
         for (const {key, file, path: localPath} of members) {
@@ -632,7 +656,7 @@ class Storage extends Base {
     /**
      * @summary Records the whole working set in one write, so the next run can recognise it.
      *
-     * One record covering three digests rather than three records: the set is adopted all-or-nothing,
+     * One record covering every member's digest rather than one record each: the set is adopted all-or-nothing,
      * so provenance that could be partially current would describe a state the reader must never act
      * on. Digests are taken over the bytes on disk — which is what a later fetch returns — because
      * deriving them from in-memory objects would compare a re-serialisation against a transmission and

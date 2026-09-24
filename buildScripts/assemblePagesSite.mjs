@@ -7,6 +7,13 @@ import {fileURLToPath, pathToFileURL} from 'url';
 // The directory the learn view's `contentPath` names, relative to the site root
 const LEARN = 'learn';
 
+/**
+ * @summary Where the site serves the contributor index, relative to its root: the path the app fetches, and the
+ * one a developer's `devindex:pull-data` reads from the deployed site.
+ * @type {String}
+ */
+export const SITE_DATA = 'apps/devindex/resources/data/';
+
 const HASH_LINKS = `<script>
 document.addEventListener('click', function(event) {
     let {target} = event;
@@ -63,8 +70,8 @@ export function assembleSite({build, dataFile, learnDir, imagesDir, out, publicB
     fs.cpSync(learnDir,  path.join(out, LEARN),             {recursive: true});
     fs.cpSync(imagesDir, path.join(out, 'resources/images'), {recursive: true});
 
-    fs.mkdirSync(path.join(out, 'apps/devindex/resources/data'), {recursive: true});
-    fs.writeFileSync(path.join(out, 'apps/devindex/resources/data/users.jsonl'), data);
+    fs.mkdirSync(path.join(out, SITE_DATA), {recursive: true});
+    fs.writeFileSync(path.join(out, SITE_DATA, 'users.jsonl'), data);
 
     const config = JSON.parse(fs.readFileSync(path.join(appEntry, 'neo-config.json'), 'utf-8'));
 
@@ -120,11 +127,13 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
             imagesDir : path.join(root, 'resources/images'),
             learnDir  : path.join(root, 'learn'),
             out       : path.join(root, process.argv[2] || '_site'),
-            publicBase: 'https://neomjs.github.io/devindex/',
+            publicBase: config.publicSite,
             receipt   : {
-                commit    : process.env.GITHUB_SHA || spawnSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf-8'}).stdout.trim(),
-                dataSource: `${config.publishedWorkingSet.baseUrl}${path.basename(dataFile)}`,
-                neoVersion: JSON.parse(fs.readFileSync(path.join(root, 'node_modules/neo.mjs/package.json'), 'utf-8')).version
+                commit         : process.env.GITHUB_SHA || spawnSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf-8'}).stdout.trim(),
+                // The workflow's data job names the publish it verified; a local assembly has no such record
+                dataPublishedAt: process.env.DEVINDEX_DATA_PUBLISHED_AT || null,
+                dataSource     : process.env.DEVINDEX_DATA_SOURCE || 'local',
+                neoVersion     : JSON.parse(fs.readFileSync(path.join(root, 'node_modules/neo.mjs/package.json'), 'utf-8')).version
             }
         });
 

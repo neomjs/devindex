@@ -3,6 +3,7 @@ import path         from 'path';
 import Neo          from '../node_modules/neo.mjs/src/Neo.mjs';
 import * as core    from '../node_modules/neo.mjs/src/core/_export.mjs';
 import config       from '../apps/devindex/services/config.mjs';
+import {SITE_DATA}  from './assemblePagesSite.mjs';
 
 /**
  * @summary Fetches the published contributor index onto disk, so the app serves it locally.
@@ -28,14 +29,13 @@ import config       from '../apps/devindex/services/config.mjs';
  * a digest check (`Storage.hydrateWorkingSet`). Re-run this script when you want newer data; nothing
  * degrades if you never do.
  *
- * The URL is read from {@link DevIndex.services.Config} rather than restated here, so the producer
- * and this script cannot drift onto different artifacts — which is the whole failure mode the digest
- * check exists to catch, and it would be perverse to reintroduce it one directory away.
+ * It reads the deployed site's copy, which is the store's latest publish, verified when the site was
+ * deployed. The site and the path are read from {@link DevIndex.services.Config} and the site's own layout
+ * rather than restated here, so this script cannot drift onto a different artifact than the one visitors see.
  */
 const
     targetPath = config.paths.users,
-    {baseUrl}  = config.publishedWorkingSet,
-    url        = `${baseUrl}${targetPath.slice(targetPath.lastIndexOf('/') + 1)}`;
+    url        = `${config.publicSite}${SITE_DATA}${targetPath.slice(targetPath.lastIndexOf('/') + 1)}`;
 
 /**
  * @summary Whether this process should skip the fetch entirely.

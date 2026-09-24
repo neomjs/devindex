@@ -1,0 +1,74 @@
+name: Pages
+
+# Builds the app against the published engine and deploys it as this repository's project site,
+# https://neomjs.github.io/devindex/, which the neomjs.com proxy serves at /devindex/. Nothing built is
+# committed: the site is an artifact of the run, and its deploy-receipt.json records what it was built from.
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, and a newer push never cancels one mid-upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      # Matches the other workflows; this repository declares no `engines`.
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm ci` already installed; the docs app is not part of the site.
+      - name: Build
+        run: npm run build-all -- -l no -p no
+
+      # The pull skips under CI, where the collection pipeline fetches the index itself. This deploy needs it, so
+      # CI is cleared for this step. The pull never fails the run on its own: the assembly below refuses an empty
+      # or missing index, so a failed fetch stops the deploy instead of publishing an empty grid.
+      - name: Pull the contributor index
+        env:
+          CI: ''
+        run: npm run devindex:pull-data
+
+      - name: Assemble the site
+        run: node ./buildScripts/assemblePagesSite.mjs _site
+
+      - name: Upload the site
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5

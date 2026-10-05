@@ -42,10 +42,10 @@
         "acorn"                        : "^8.17.0",
         "astring"                      : "^1.9.0",
         "autoprefixer"                 : "^10.6.1",
-        "chalk"                        : "^6.0.0",
+        "chalk"                        : "^6.0.1",
         "commander"                    : "^15.0.0",
-        "cssnano"                      : "^9.0.5",
-        "dotenv"                       : "^18.0.3",
+        "cssnano"                      : "^9.1.2",
+        "dotenv"                       : "^18.0.5",
         "envinfo"                      : "^7.21.0",
         "esbuild"                      : "^0.28.1",
         "fast-glob"                    : "^3.3.3",
@@ -62,13 +62,13 @@
         "neo-agent-skills"             : "^0.1.18",
         "parse5"                       : "^8.0.1",
         "postcss"                      : "^8.5.16",
-        "sass"                         : "^1.105.0",
+        "sass"                         : "^1.105.1",
         "terser"                       : "^5.51.2",
         "url"                          : "^0.11.4",
         "webpack"                      : "^5.111.1",
         "webpack-cli"                  : "^7.2.3",
         "webpack-dev-server"           : "^6.0.0",
         "webpack-hook-plugin"          : "^1.0.7",
-        "ws"                           : "^8.21.0"
+        "ws"                           : "^8.22.0"
     }
 }

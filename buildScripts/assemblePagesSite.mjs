@@ -14,6 +14,16 @@ const LEARN = 'learn';
  */
 export const SITE_DATA = 'apps/devindex/resources/data/';
 
+/**
+ * @summary The builds the site ships, each whole in its own `dist/<env>/`, and the app's entry in each, relative to
+ * the site root. The site root's entry is production's as well.
+ * @type {Object<String, String>}
+ */
+export const ENTRIES = Object.freeze({
+    'dist/development': 'dist/development/apps/devindex/',
+    'dist/production' : 'dist/production/apps/devindex/'
+});
+
 const HASH_LINKS = `<script>
 document.addEventListener('click', function(event) {
     let {target} = event;
@@ -26,63 +36,76 @@ document.addEventListener('click', function(event) {
 </script>`;
 
 /**
- * @summary Assembles the GitHub Pages site from a production build, with the app's entry at the site root.
+ * @summary Assembles the GitHub Pages site from a workspace after `build-all`: each build in {@link ENTRIES}, with
+ * production's entry also at the site root.
  *
  * A project site lives under a mount (`/devindex/`), and the origin root above it belongs to another site, so every
  * relative URL must stay inside the mount. The page and the workers resolve `basePath` against different bases —
- * the page against its own location, a worker against its script — so the root `index.html` sets `<base>` to
- * `dist/production/`, the directory the workers are served from, and the site's `neo-config.json` sits there:
- * `basePath: '../../'` then names the mount from both sides. `<base>` also re-targets `#` links, so a click handler
- * keeps hash routes on the page, as the engine portal's root entry does.
+ * the page against its own location, a worker against its script — and a build's entry sits two levels below its
+ * workers. Served at an origin root, a `basePath` that climbs past the root is clamped there, so the build works;
+ * under a mount it leaves the site. Every entry therefore sets `<base>` to its build's directory, where the workers
+ * are served from, and that build's `neo-config.json` sits there: `basePath: '../../'` then names the mount from both
+ * sides, where the contributor index and the guides sit once for every build. `<base>` also re-targets `#` links, so
+ * a click handler keeps hash routes on the page, as the engine portal's root entry does.
  *
- * The config also sets `isGitHubPages`, which the `pages` deployment sets for every site it builds. It keeps the
+ * The configs also set `isGitHubPages`, which the `pages` deployment sets for every site it builds. It keeps the
  * development-only Neural Link client off a public page, where it can only fail to reach a local bridge.
  *
- * The contributor index is required: a green build of an empty grid is not a deploy.
+ * The contributor index and every build are required: a green build of an empty grid, or of a site missing a build
+ * the Portal links, is not a deploy.
  * @param {Object} options
- * @param {String} options.build      The production build directory (`dist/production`)
+ * @param {String} options.root       The workspace root, after `build-all`
  * @param {String} options.dataFile   The pulled `users.jsonl`
- * @param {String} options.learnDir   The guides the learn view reads
- * @param {String} options.imagesDir  The workspace images the app references
  * @param {String} options.out        The site directory to create; replaced when it exists
  * @param {String} options.publicBase The mount the site is served at, with its trailing slash
  * @param {Object} options.receipt    Provenance written to `deploy-receipt.json`, e.g. commit and data source
- * @returns {Object} The receipt as written, with `publicBase`, `contentBase`, `dataRecords` and `dataDigest` added
+ * @returns {Object} The receipt as written, with `publicBase`, `contentBase`, `entries`, `dataRecords` and
+ * `dataDigest` added
  */
-export function assembleSite({build, dataFile, learnDir, imagesDir, out, publicBase, receipt}) {
+export function assembleSite({root, dataFile, out, publicBase, receipt}) {
     // Without the slash, URL resolution drops the mount's last segment and every base in the receipt leaves the site
     if (!publicBase?.endsWith('/')) {
         throw new Error(`the public base \`${publicBase}\` must end with a slash`)
     }
 
     const
-        appEntry = path.join(build, 'apps/devindex'),
-        data     = fs.existsSync(dataFile) ? fs.readFileSync(dataFile) : null,
-        records  = data ? data.toString('utf-8').split('\n').filter(line => line.trim()).length : 0;
+        data    = fs.existsSync(dataFile) ? fs.readFileSync(dataFile) : null,
+        records = data ? data.toString('utf-8').split('\n').filter(line => line.trim()).length : 0,
+        read    = (...file) => fs.readFileSync(path.join(root, ...file), 'utf-8'),
+        missing = [...Object.values(ENTRIES).map(entry => `${entry}index.html`), LEARN, 'resources/images'].filter(file => !fs.existsSync(path.join(root, file)));
 
     if (!records) {
         throw new Error(`${dataFile} is missing or empty: an empty contributor grid is not a deploy`)
     }
 
+    if (missing.length) {
+        throw new Error(`the workspace has no ${missing.join(', ')}: run build-all before assembling the site`)
+    }
+
     fs.rmSync(out, {force: true, recursive: true});
 
-    fs.cpSync(build,     path.join(out, 'dist/production'), {recursive: true});
-    fs.cpSync(learnDir,  path.join(out, LEARN),             {recursive: true});
-    fs.cpSync(imagesDir, path.join(out, 'resources/images'), {recursive: true});
+    for (const file of [...Object.keys(ENTRIES), LEARN, 'resources/images']) {
+        fs.cpSync(path.join(root, file), path.join(out, file), {recursive: true})
+    }
 
     fs.mkdirSync(path.join(out, SITE_DATA), {recursive: true});
     fs.writeFileSync(path.join(out, SITE_DATA, 'users.jsonl'), data);
 
-    const config = JSON.parse(fs.readFileSync(path.join(appEntry, 'neo-config.json'), 'utf-8'));
+    for (const [build, entry] of Object.entries(ENTRIES)) {
+        const config = JSON.parse(read(entry, 'neo-config.json'));
 
-    fs.writeFileSync(path.join(out, 'dist/production/neo-config.json'), JSON.stringify({...config, basePath: '../../', isGitHubPages: true, workerBasePath: './'}));
-    fs.writeFileSync(path.join(out, 'index.html'), rootEntry(fs.readFileSync(path.join(appEntry, 'index.html'), 'utf-8')));
+        fs.writeFileSync(path.join(out, build, 'neo-config.json'), JSON.stringify({...config, basePath: '../../', isGitHubPages: true, workerBasePath: './'}));
+        fs.writeFileSync(path.join(out, entry, 'index.html'), entryPage(read(entry, 'index.html'), '../../'))
+    }
+
+    fs.writeFileSync(path.join(out, 'index.html'), entryPage(read(ENTRIES['dist/production'], 'index.html'), './dist/production/'));
 
     const written = {
         ...receipt,
         contentBase: new URL(`${LEARN}/`, publicBase).href,
         dataDigest : createHash('sha256').update(data).digest('hex'),
         dataRecords: records,
+        entries    : Object.fromEntries(Object.entries(ENTRIES).map(([build, entry]) => [build, new URL(entry, publicBase).href])),
         publicBase
     };
 
@@ -92,14 +115,16 @@ export function assembleSite({build, dataFile, learnDir, imagesDir, out, publicB
 }
 
 /**
- * @summary Turns the build's app entry, which expects to sit in `dist/production/apps/devindex/`, into the site root's.
- * Every rewrite must match: a changed build shape fails the assembly instead of shipping a page that loads nothing.
+ * @summary Turns a build's app entry, which expects to sit in `dist/<env>/apps/devindex/`, into a page whose base is
+ * that build's directory. Every rewrite must match: a changed build shape fails the assembly instead of shipping a
+ * page that loads nothing.
  * @param {String} html
+ * @param {String} base The build's directory, relative to where the page is served
  * @returns {String}
  */
-export function rootEntry(html) {
+export function entryPage(html, base) {
     return [
-        ['<head>',                               '<head><base href="./dist/production/">'],
+        ['<head>',                               `<head><base href="${base}">`],
         ['src="../../src/MicroLoader.mjs"',      'src="src/MicroLoader.mjs"'],
         ['href="./resources/images/',            'href="apps/devindex/resources/images/'],
         ['</body>',                              `${HASH_LINKS}</body>`]
@@ -122,12 +147,10 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
         {default: config} = await import('../apps/devindex/services/config.mjs'),
         dataFile          = config.paths.users,
         receipt           = assembleSite({
-            build     : path.join(root, 'dist/production'),
             dataFile,
-            imagesDir : path.join(root, 'resources/images'),
-            learnDir  : path.join(root, 'learn'),
             out       : path.join(root, process.argv[2] || '_site'),
             publicBase: config.publicSite,
+            root,
             receipt   : {
                 commit         : process.env.GITHUB_SHA || spawnSync('git', ['rev-parse', 'HEAD'], {cwd: root, encoding: 'utf-8'}).stdout.trim(),
                 // The workflow's data job names the publish it verified; a local assembly has no such record
@@ -137,5 +160,5 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
             }
         });
 
-    console.log(`[pages] Site assembled: ${receipt.dataRecords.toLocaleString('en-US')} contributor records, neo.mjs ${receipt.neoVersion}, commit ${receipt.commit.slice(0, 10)}.`)
+    console.log(`[pages] Site assembled: ${receipt.dataRecords.toLocaleString('en-US')} contributor records, ${Object.keys(receipt.entries).join(' and ')}, neo.mjs ${receipt.neoVersion}, commit ${receipt.commit.slice(0, 10)}.`)
 }

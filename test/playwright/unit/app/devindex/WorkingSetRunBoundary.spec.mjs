@@ -13,7 +13,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
  * bodies are replaced by the Storage calls a real stage makes first, per `DEVINDEX_TEST_STAGE`. Everything else —
  * `cli.mjs`, the Manager, Storage, the publisher — is the real code. The disk is slow, as on a CI runner: every
  * `fs/promises.access` waits 30 ms, so Storage's `ensureFiles()` is still running when anything that skips its
- * `ready()` reads the set (#37).
+ * `ready()` reads the set.
  */
 const PRELOAD = `
 import Neo       from '${REPO_ROOT}/node_modules/neo.mjs/src/Neo.mjs';

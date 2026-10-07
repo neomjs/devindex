@@ -11,8 +11,8 @@ setup({
 import {test, expect} from '@playwright/test';
 import Neo            from '../../../../../node_modules/neo.mjs/src/Neo.mjs';
 import * as core      from '../../../../../node_modules/neo.mjs/src/core/_export.mjs';
-import config         from '../../../../../apps/devindex/services/config.mjs';
-import Storage        from '../../../../../apps/devindex/services/Storage.mjs';
+import config         from '../../../../../services/config.mjs';
+import Storage        from '../../../../../services/Storage.mjs';
 
 /**
  * @summary The read side: fetching the published working set, verifying it, and adopting it as one unit.

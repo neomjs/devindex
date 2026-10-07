@@ -2,7 +2,7 @@ import fs           from 'fs';
 import path         from 'path';
 import Neo          from '../node_modules/neo.mjs/src/Neo.mjs';
 import * as core    from '../node_modules/neo.mjs/src/core/_export.mjs';
-import config       from '../apps/devindex/services/config.mjs';
+import config       from '../services/config.mjs';
 import {SITE_DATA}  from './assemblePagesSite.mjs';
 
 /**

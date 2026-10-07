@@ -1,6 +1,6 @@
 import {createHash} from 'crypto';
 import fs           from 'fs/promises';
-import Base         from '../../../node_modules/neo.mjs/src/core/Base.mjs';
+import Base         from '../node_modules/neo.mjs/src/core/Base.mjs';
 import config       from './config.mjs';
 
 /**

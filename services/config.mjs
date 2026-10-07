@@ -1,11 +1,11 @@
 import fs                from 'fs/promises';
 import path              from 'path';
 import { fileURLToPath } from 'url';
-import Base              from '../../../node_modules/neo.mjs/src/core/Base.mjs';
+import Base              from '../node_modules/neo.mjs/src/core/Base.mjs';
 
 const __filename  = fileURLToPath(import.meta.url);
 const __dirname   = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, '../../../');
+const projectRoot = path.resolve(__dirname, '../');
 
 /**
  * Default configuration object for the DevIndex Backend Services.

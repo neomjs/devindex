@@ -11,8 +11,8 @@ setup({
 import {test, expect} from '@playwright/test';
 import Neo            from '../../../../../node_modules/neo.mjs/src/Neo.mjs';
 import * as core      from '../../../../../node_modules/neo.mjs/src/core/_export.mjs';
-import Cleanup        from '../../../../../apps/devindex/services/Cleanup.mjs';
-import GitHub         from '../../../../../apps/devindex/services/GitHub.mjs';
+import Cleanup        from '../../../../../services/Cleanup.mjs';
+import GitHub         from '../../../../../services/GitHub.mjs';
 
 test.describe('DevIndex Cleanup rich-user tracker reconciliation', () => {
     let originalGetLoginByDatabaseId;

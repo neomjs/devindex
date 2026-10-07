@@ -1,8 +1,8 @@
-import {test, expect}                      from '@playwright/test';
-import fs                                  from 'fs';
-import os                                  from 'os';
-import path                                from 'path';
-import {ENTRIES, assembleSite, entryPage}  from '../../../../buildScripts/assemblePagesSite.mjs';
+import {test, expect}                                from '@playwright/test';
+import fs                                            from 'fs';
+import os                                            from 'os';
+import path                                          from 'path';
+import {ENTRIES, SITE_DATA, assembleSite, entryPage} from '../../../../buildScripts/assemblePagesSite.mjs';
 
 const ENTRY = '<!doctype html><html><head><meta charset="UTF-8"><link rel="icon" href="./resources/images/neo_logo_favicon.svg"></head><body><script src="../../src/MicroLoader.mjs" type="module"></script></body></html>';
 
@@ -82,6 +82,27 @@ test.describe('buildScripts/assemblePagesSite', () => {
         expect(Object.keys(receipt.entries)).toEqual(['dist/development', 'dist/production']);
         expect(receipt.dataDigest).toMatch(/^[0-9a-f]{64}$/);
         expect(JSON.parse(page('deploy-receipt.json'))).toEqual(receipt)
+    });
+
+    test('a build\'s own copy of the contributor index stays out of the site, which ships the index once', () => {
+        const options = fixture('{"l":"a"}\n');
+
+        for (const build of Object.keys(ENTRIES)) {
+            fs.mkdirSync(path.join(options.root, build, SITE_DATA), {recursive: true});
+            fs.writeFileSync(path.join(options.root, build, SITE_DATA, 'users.jsonl'), '{"l":"stale"}\n');
+            fs.mkdirSync(path.join(options.root, build, 'apps/devindex/resources/images'), {recursive: true});
+            fs.writeFileSync(path.join(options.root, build, 'apps/devindex/resources/images/logo.svg'), '<svg/>')
+        }
+
+        assembleSite(options);
+
+        for (const build of Object.keys(ENTRIES)) {
+            expect(fs.existsSync(path.join(options.out, build, SITE_DATA))).toBe(false);
+            // The rest of the build's resources still ship
+            expect(fs.existsSync(path.join(options.out, build, 'apps/devindex/resources/images/logo.svg'))).toBe(true)
+        }
+
+        expect(fs.readFileSync(path.join(options.out, SITE_DATA, 'users.jsonl'), 'utf-8')).toBe('{"l":"a"}\n')
     });
 
     test('a workspace missing a build refuses the site before anything is written', () => {

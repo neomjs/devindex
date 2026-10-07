@@ -9,9 +9,9 @@ setup({
 import {test, expect} from '@playwright/test';
 import Neo            from '../../../../../node_modules/neo.mjs/src/Neo.mjs';
 import * as core      from '../../../../../node_modules/neo.mjs/src/core/_export.mjs';
-import GitHub         from '../../../../../apps/devindex/services/GitHub.mjs';
-import Storage        from '../../../../../apps/devindex/services/Storage.mjs';
-import Updater        from '../../../../../apps/devindex/services/Updater.mjs';
+import GitHub         from '../../../../../services/GitHub.mjs';
+import Storage        from '../../../../../services/Storage.mjs';
+import Updater        from '../../../../../services/Updater.mjs';
 
 test.describe.serial('DevIndex Updater rename recovery (#11516)', () => {
     let originalFetchUserData,

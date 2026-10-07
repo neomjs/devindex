@@ -1,6 +1,6 @@
 import {exec}      from 'child_process';
 import {promisify} from 'util';
-import Base        from '../../../node_modules/neo.mjs/src/core/Base.mjs';
+import Base        from '../node_modules/neo.mjs/src/core/Base.mjs';
 import config      from './config.mjs';
 
 const execAsync = promisify(exec);

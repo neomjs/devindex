@@ -1,6 +1,6 @@
 # The Updater Service (Enrichment Engine)
 
-The **Updater Service** ([`DevIndex.services.Updater`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/Updater.mjs)) is the most complex component of the DevIndex Data Factory. While the Spider discovers *who* to track, the Updater is responsible for fetching, aggregating, and minifying the deep historical data required for the frontend visualizations.
+The **Updater Service** ([`DevIndex.services.Updater`](https://github.com/neomjs/devindex/blob/dev/services/Updater.mjs)) is the most complex component of the DevIndex Data Factory. While the Spider discovers *who* to track, the Updater is responsible for fetching, aggregating, and minifying the deep historical data required for the frontend visualizations.
 
 It acts as a highly resilient "Worker Bee," taking a batch of usernames from the `tracker.json` queue and converting them into the rich, minified JSON objects stored in `users.jsonl`.
 

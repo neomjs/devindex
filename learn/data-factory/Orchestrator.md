@@ -3,8 +3,8 @@
 The DevIndex Data Factory is essentially a collection of specialized micro-services (Spider, Updater, Storage, etc.). To coordinate these services into a cohesive, automated workflow, the system relies on the **Orchestrator** layer.
 
 This layer is comprised of three distinct parts:
-1.  **The Entry Point:** `apps/devindex/services/cli.mjs`
-2.  **The Command Router:** [`DevIndex.services.Manager`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/Manager.mjs)
+1.  **The Entry Point:** `services/cli.mjs`
+2.  **The Command Router:** [`DevIndex.services.Manager`](https://github.com/neomjs/devindex/blob/dev/services/Manager.mjs)
 3.  **The Automated Pipeline:** `.github/workflows/data-sync-pipeline.yml`
 
 ---

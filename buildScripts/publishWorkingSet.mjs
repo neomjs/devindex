@@ -2,8 +2,8 @@ import fs        from 'fs/promises';
 import {spawn}   from 'child_process';
 import Neo       from '../node_modules/neo.mjs/src/Neo.mjs';
 import * as core from '../node_modules/neo.mjs/src/core/_export.mjs';
-import config    from '../apps/devindex/services/config.mjs';
-import Storage   from '../apps/devindex/services/Storage.mjs';
+import config    from '../services/config.mjs';
+import Storage   from '../services/Storage.mjs';
 
 /**
  * @summary Publishes the working set to the content plane, without committing anything.

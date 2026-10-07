@@ -24,7 +24,7 @@ import path      from 'path';
 const access = fsp.access;
 fsp.access = async (...args) => {await new Promise(resolve => setTimeout(resolve, 30)); return access(...args)};
 
-const {default: config} = await import('${REPO_ROOT}/apps/devindex/services/config.mjs');
+const {default: config} = await import('${REPO_ROOT}/services/config.mjs');
 
 Object.keys(config.paths).forEach(key => {
     config.paths[key] = path.join(process.env.DEVINDEX_TEST_DATA_DIR, path.basename(config.paths[key]))
@@ -37,9 +37,9 @@ globalThis.fetch = async url => {
     return body === undefined ? {ok: false, status: 404, text: async () => ''} : {ok: true, status: 200, text: async () => body}
 };
 
-const {default: Storage} = await import('${REPO_ROOT}/apps/devindex/services/Storage.mjs'),
-      {default: OptIn}   = await import('${REPO_ROOT}/apps/devindex/services/OptIn.mjs'),
-      {default: OptOut}  = await import('${REPO_ROOT}/apps/devindex/services/OptOut.mjs');
+const {default: Storage} = await import('${REPO_ROOT}/services/Storage.mjs'),
+      {default: OptIn}   = await import('${REPO_ROOT}/services/OptIn.mjs'),
+      {default: OptOut}  = await import('${REPO_ROOT}/services/OptOut.mjs');
 
 OptIn.run = async () => {
     if (process.env.DEVINDEX_TEST_STAGE === 'optin-removes') {
@@ -126,8 +126,8 @@ test.describe('DevIndex working set — the run boundary', () => {
         const r         = runner(),
               published = JSON.stringify(publishedSet());
 
-        const optin  = r.run('apps/devindex/services/cli.mjs', ['optin'],  {DEVINDEX_TEST_PUBLISHED: published, DEVINDEX_TEST_STAGE: 'optin-none'}),
-              optout = r.run('apps/devindex/services/cli.mjs', ['optout'], {DEVINDEX_TEST_PUBLISHED: published});
+        const optin  = r.run('services/cli.mjs', ['optin'],  {DEVINDEX_TEST_PUBLISHED: published, DEVINDEX_TEST_STAGE: 'optin-none'}),
+              optout = r.run('services/cli.mjs', ['optout'], {DEVINDEX_TEST_PUBLISHED: published});
 
         expect(optin.status,  optin.stderr).toBe(0);
         expect(optout.status, optout.stderr).toBe(0);
@@ -140,7 +140,7 @@ test.describe('DevIndex working set — the run boundary', () => {
         const r         = runner(),
               published = JSON.stringify(publishedSet({blocklist: ['old-block']}));
 
-        const optin = r.run('apps/devindex/services/cli.mjs', ['optin'], {DEVINDEX_TEST_PUBLISHED: published, DEVINDEX_TEST_STAGE: 'optin-removes'});
+        const optin = r.run('services/cli.mjs', ['optin'], {DEVINDEX_TEST_PUBLISHED: published, DEVINDEX_TEST_STAGE: 'optin-removes'});
 
         expect(optin.status, optin.stderr).toBe(0);
         expect(JSON.parse(r.read('blocklist.json'))).not.toContain('old-block')

@@ -1,6 +1,6 @@
 # Opt-Out Service Architecture
 
-The **Opt-Out Service** ([`DevIndex.services.OptOut`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/OptOut.mjs)) is a foundational component of the DevIndex discovery pipeline. It provides an automated, secure, and privacy-first mechanism for developers to remove themselves from the DevIndex and prevent future indexing.
+The **Opt-Out Service** ([`DevIndex.services.OptOut`](https://github.com/neomjs/devindex/blob/dev/services/OptOut.mjs)) is a foundational component of the DevIndex discovery pipeline. It provides an automated, secure, and privacy-first mechanism for developers to remove themselves from the DevIndex and prevent future indexing.
 
 This service processes two distinct streams of data from the `neomjs/devindex-opt-out` repository:
 1.  **Stargazers ("Quick Star" / Stealth):** An implicit, highly secure, and traceless way for users to opt out.

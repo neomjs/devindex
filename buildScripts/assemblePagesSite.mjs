@@ -52,7 +52,8 @@ document.addEventListener('click', function(event) {
  * development-only Neural Link client off a public page, where it can only fail to reach a local bridge.
  *
  * The contributor index and every build are required: a green build of an empty grid, or of a site missing a build
- * the Portal links, is not a deploy.
+ * the Portal links, is not a deploy. The index ships once, at {@link SITE_DATA}: a build's own copy of the app's
+ * `resources/data/` is never copied.
  * @param {Object} options
  * @param {String} options.root       The workspace root, after `build-all`
  * @param {String} options.dataFile   The pulled `users.jsonl`
@@ -85,7 +86,9 @@ export function assembleSite({root, dataFile, out, publicBase, receipt}) {
     fs.rmSync(out, {force: true, recursive: true});
 
     for (const file of [...Object.keys(ENTRIES), LEARN, 'resources/images']) {
-        fs.cpSync(path.join(root, file), path.join(out, file), {recursive: true})
+        const ownIndex = path.join(root, file, SITE_DATA);
+
+        fs.cpSync(path.join(root, file), path.join(out, file), {filter: src => !`${src}${path.sep}`.startsWith(ownIndex), recursive: true})
     }
 
     fs.mkdirSync(path.join(out, SITE_DATA), {recursive: true});
@@ -144,7 +147,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
 
     const
         root              = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'),
-        {default: config} = await import('../apps/devindex/services/config.mjs'),
+        {default: config} = await import('../services/config.mjs'),
         dataFile          = config.paths.users,
         receipt           = assembleSite({
             dataFile,

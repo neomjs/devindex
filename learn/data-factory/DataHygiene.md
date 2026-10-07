@@ -1,6 +1,6 @@
 # Data Hygiene & Cleanup
 
-The **Cleanup Service** ([`DevIndex.services.Cleanup`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/Cleanup.mjs)) acts as the **Garbage Collector** and **State Enforcer** for the DevIndex data pipeline.
+The **Cleanup Service** ([`DevIndex.services.Cleanup`](https://github.com/neomjs/devindex/blob/dev/services/Cleanup.mjs)) acts as the **Garbage Collector** and **State Enforcer** for the DevIndex data pipeline.
 
 Because the Data Factory operates autonomously—discovering thousands of users and constantly writing to JSON files—data entropy is inevitable. The Cleanup service is invoked automatically by the Orchestrator before any major operation to ensure the system starts with a clean, consistent, and optimized state.
 

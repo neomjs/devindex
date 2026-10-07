@@ -1,6 +1,6 @@
 # The GitHub API Client
 
-The **GitHub Service** ([`DevIndex.services.GitHub`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/GitHub.mjs)) abstracts the complexity of communicating with GitHub. It provides a unified, resilient interface for both GraphQL and REST queries, managing authentication, rate limiting, and complex error handling autonomously.
+The **GitHub Service** ([`DevIndex.services.GitHub`](https://github.com/neomjs/devindex/blob/dev/services/GitHub.mjs)) abstracts the complexity of communicating with GitHub. It provides a unified, resilient interface for both GraphQL and REST queries, managing authentication, rate limiting, and complex error handling autonomously.
 
 ---
 

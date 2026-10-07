@@ -1,4 +1,4 @@
-import Base    from '../../../node_modules/neo.mjs/src/core/Base.mjs';
+import Base    from '../node_modules/neo.mjs/src/core/Base.mjs';
 import config  from './config.mjs';
 import GitHub  from './GitHub.mjs';
 import Storage from './Storage.mjs';

@@ -9,9 +9,9 @@ setup({
 import {test, expect} from '@playwright/test';
 import Neo            from '../../../../../node_modules/neo.mjs/src/Neo.mjs';
 import * as core      from '../../../../../node_modules/neo.mjs/src/core/_export.mjs';
-import GitHub         from '../../../../../apps/devindex/services/GitHub.mjs';
-import OptIn          from '../../../../../apps/devindex/services/OptIn.mjs';
-import Storage        from '../../../../../apps/devindex/services/Storage.mjs';
+import GitHub         from '../../../../../services/GitHub.mjs';
+import OptIn          from '../../../../../services/OptIn.mjs';
+import Storage        from '../../../../../services/Storage.mjs';
 
 /**
  * Opt-in has TWO independent intake mechanisms — stargazers and issues — reading the same

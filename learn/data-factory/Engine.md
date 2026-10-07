@@ -1,6 +1,6 @@
 # The Spider (Discovery Engine)
 
-The **Spider Service** ([`DevIndex.services.Spider`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/Spider.mjs)) is the core discovery engine for the DevIndex application. Its primary responsibility is to autonomously traverse the GitHub social graph and repository ecosystem to find new, qualified developer profiles to add to our tracking queue (`tracker.json`).
+The **Spider Service** ([`DevIndex.services.Spider`](https://github.com/neomjs/devindex/blob/dev/services/Spider.mjs)) is the core discovery engine for the DevIndex application. Its primary responsibility is to autonomously traverse the GitHub social graph and repository ecosystem to find new, qualified developer profiles to add to our tracking queue (`tracker.json`).
 
 Unlike a simple, linear scraper that repeatedly scans the same "Top 100" lists, the Spider is designed as a **Multi-Strategy Graph Crawler**. It employs a weighted "Random Walk" architecture to deliberately avoid "Filter Bubbles" and discover high-value contributors who might otherwise remain hidden.
 

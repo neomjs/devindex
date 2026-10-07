@@ -14,8 +14,8 @@ import os             from 'os';
 import path           from 'path';
 import Neo            from '../../../../../node_modules/neo.mjs/src/Neo.mjs';
 import * as core      from '../../../../../node_modules/neo.mjs/src/core/_export.mjs';
-import config         from '../../../../../apps/devindex/services/config.mjs';
-import Storage        from '../../../../../apps/devindex/services/Storage.mjs';
+import config         from '../../../../../services/config.mjs';
+import Storage        from '../../../../../services/Storage.mjs';
 
 /**
  * @summary A write must survive the data directory not existing at all.

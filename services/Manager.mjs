@@ -1,6 +1,6 @@
 import {Command} from 'commander';
 import inquirer  from 'inquirer';
-import Base      from '../../../node_modules/neo.mjs/src/core/Base.mjs';
+import Base      from '../node_modules/neo.mjs/src/core/Base.mjs';
 import config    from './config.mjs';
 import Storage   from './Storage.mjs';
 import Updater   from './Updater.mjs';

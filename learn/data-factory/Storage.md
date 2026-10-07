@@ -1,6 +1,6 @@
 # Storage & Configuration
 
-The DevIndex Data Factory relies on two foundational services to manage its state and execution parameters: **`Storage`** ([`DevIndex.services.Storage`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/Storage.mjs)) and **`Config`** ([`DevIndex.services.Config`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/config.mjs)). 
+The DevIndex Data Factory relies on two foundational services to manage its state and execution parameters: **`Storage`** ([`DevIndex.services.Storage`](https://github.com/neomjs/devindex/blob/dev/services/Storage.mjs)) and **`Config`** ([`DevIndex.services.Config`](https://github.com/neomjs/devindex/blob/dev/services/config.mjs)). 
 
 Together, they provide a robust, JSON-backed persistence layer and a centralized configuration interface that dictates how the Spider and Updater services behave.
 

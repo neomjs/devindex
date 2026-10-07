@@ -11,7 +11,7 @@ setup({
 import {test, expect} from '@playwright/test';
 import Neo            from '../../../../../node_modules/neo.mjs/src/Neo.mjs';
 import * as core      from '../../../../../node_modules/neo.mjs/src/core/_export.mjs';
-import GitHub         from '../../../../../apps/devindex/services/GitHub.mjs';
+import GitHub         from '../../../../../services/GitHub.mjs';
 
 test.describe('DevIndex GitHub service', () => {
     let originalRest;

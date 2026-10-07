@@ -8,7 +8,7 @@ While the high-level concepts of these metrics are described in the [Methodology
 
 ## 1. The Heuristics Engine (Anomaly Detection)
 
-The **Heuristics Service** ([`DevIndex.services.Heuristics`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/Heuristics.mjs)) analyzes a user's multi-year contribution array (`y`) to identify extraordinary patterns. 
+The **Heuristics Service** ([`DevIndex.services.Heuristics`](https://github.com/neomjs/devindex/blob/dev/services/Heuristics.mjs)) analyzes a user's multi-year contribution array (`y`) to identify extraordinary patterns. 
 
 GitHub's ecosystem is vast, and a pure sum of contributions (`total_contributions`) masks the *shape* of a developer's career. The engine computes three distinct "Cyborg Metrics" that help researchers distinguish between organic long-term maintainers and highly automated systems or short-term anomalies.
 
@@ -43,7 +43,7 @@ const acceleration = parseFloat((maxYear / median).toFixed(2));
 
 ## 2. Location Normalizer
 
-The **Location Normalizer Service** ([`DevIndex.services.LocationNormalizer`](https://github.com/neomjs/devindex/blob/main/apps/devindex/services/LocationNormalizer.mjs)) solves a notoriously difficult data hygiene problem: converting free-text, user-inputted GitHub location strings into standardized ISO 3166-1 Alpha-2 country codes.
+The **Location Normalizer Service** ([`DevIndex.services.LocationNormalizer`](https://github.com/neomjs/devindex/blob/dev/services/LocationNormalizer.mjs)) solves a notoriously difficult data hygiene problem: converting free-text, user-inputted GitHub location strings into standardized ISO 3166-1 Alpha-2 country codes.
 
 To do this efficiently and accurately without relying on external (and expensive) geocoding APIs, the service employs a multi-tiered parsing strategy.
 

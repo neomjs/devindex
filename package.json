@@ -61,13 +61,13 @@
         "monaco-editor"                : "0.57.0",
         "neo-agent-skills"             : "^0.1.55",
         "parse5"                       : "^8.0.1",
-        "postcss"                      : "^8.5.30",
+        "postcss"                      : "^8.5.31",
         "sass"                         : "^1.105.2",
         "terser"                       : "^5.51.2",
         "url"                          : "^0.11.4",
         "webpack"                      : "^5.112.0",
         "webpack-cli"                  : "^7.2.3",
-        "webpack-dev-server"           : "^6.0.0",
+        "webpack-dev-server"           : "^6.1.0",
         "webpack-hook-plugin"          : "^1.0.7",
         "ws"                           : "^8.22.0"
     }

@@ -53,7 +53,7 @@
         "gray-matter"                  : "^4.0.3",
         "highlightjs-line-numbers.js"  : "^2.9.1",
         "html-minifier-terser"         : "^7.2.0",
-        "inquirer"                     : "^14.2.3",
+        "inquirer"                     : "^14.2.4",
         "js-yaml"                      : "^5.5.0",
         "jsdoc-api"                    : "^9.3.6",
         "marked"                       : "^18.1.1",

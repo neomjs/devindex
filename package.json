@@ -69,6 +69,6 @@
         "webpack-cli"                  : "^7.3.1",
         "webpack-dev-server"           : "^6.1.0",
         "webpack-hook-plugin"          : "^1.0.7",
-        "ws"                           : "^8.22.0"
+        "ws"                           : "^8.22.1"
     }
 }

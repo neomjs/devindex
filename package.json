@@ -38,7 +38,7 @@
     },
     "devDependencies": {
         "@fortawesome/fontawesome-free": "^7.3.0",
-        "@playwright/test"             : "^1.65.0",
+        "@playwright/test"             : "^1.65.1",
         "acorn"                        : "^8.19.0",
         "astring"                      : "^1.9.0",
         "autoprefixer"                 : "^10.6.2",
@@ -61,7 +61,7 @@
         "monaco-editor"                : "0.57.0",
         "neo-agent-skills"             : "^1.9.12",
         "parse5"                       : "^8.1.1",
-        "postcss"                      : "^8.5.32",
+        "postcss"                      : "^8.5.33",
         "sass"                         : "^1.108.2",
         "terser"                       : "^5.51.2",
         "url"                          : "^0.11.4",

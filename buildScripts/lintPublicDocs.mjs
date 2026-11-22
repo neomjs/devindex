@@ -9,27 +9,27 @@ import {fileURLToPath} from 'node:url';
  * every manifest-admitted Markdown guide.
  *
  * Default-deny spoke federation requires two guarantees:
- * 1. **Structural parity:** Every `learn/tree.json` leaf is explicitly listed in `docs/public-manifest.json` at its
- *    canonical `/learn/guides/devindex/<id>` route, and every manifest entry resolves to a real tracked `.md` file
- *    inside `learn/` with no path traversal or duplicate routes.
+ * 1. **Structural parity:** Every `learn/tree.json` leaf is explicitly listed in `docs/public-manifest.json` under the
+ *    canonical `/learn/<treeMount.id>/<id>` route derived from `treeMount.id`, and every manifest entry resolves to a
+ *    real tracked `.md` file inside `learn/` with no path traversal or duplicate routes.
  * 2. **Content hygiene:** Admitted product guides contain zero real host filesystem paths (`/Users/<name>/`,
- *    `/home/<name>/`, `C:\Users\<name>\`), zero private-repository identifiers (`neomjs/business`,
- *    `neomjs/neo-stage`, `neomjs/neo-pro`), and zero broken relative `.md` links outside fenced code blocks, while
- *    permitting public `@neo-*` maintainer handles used in illustrative examples.
+ *    `/home/<name>/`, `C:\Users\<name>\`, or `file://` URLs targeting them), zero private-repository identifiers
+ *    (`neomjs/business`, `neomjs/neo-stage`, `neomjs/neo-pro`), and zero broken or unpublished relative Markdown links
+ *    outside fenced and inline code, while permitting public `@neo-*` maintainer handles used in illustrative examples.
  */
 
 const
     __filename      = fileURLToPath(import.meta.url),
     REPO_ROOT       = path.resolve(path.dirname(__filename), '..'),
-    DEFAULT_PREFIX  = '/learn/guides/devindex/',
     EXPECTED_SCHEMA = 'public-manifest.v1',
     EXPECTED_SPOKE  = 'neomjs/devindex',
-    // Root-anchored Unix/macOS & Windows user home paths; ignores repo-relative segments like `view/home/MainContainer.mjs`
-    // and generic placeholders (`<you>`, `<user>`, `<username>`, `you`, `user`, `username`).
-    UNIX_HOST_PATH_RE = /(?:^|[\s`'"(=])(\/(?:Users|home)\/(?![<{]|(?:you|user|username)(?:\/|\b))[A-Za-z0-9._-]+\/[^\s`'")>\]]*)/gm,
-    WIN_HOST_PATH_RE  = /(?:^|[\s`'"(=])([A-Za-z]:\\Users\\(?![<{]|(?:you|user|username)(?:\\|\b))[A-Za-z0-9._-]+\\[^\s`'")>\]]*)/gm,
+    // Root-anchored or file:// Unix/macOS & Windows user home paths; ignores repo-relative segments like
+    // `view/home/MainContainer.mjs` and generic placeholders (`<you>`, `<user>`, `<username>`, `you`, `user`, `username`).
+    UNIX_HOST_PATH_RE = /(?:^|[\s`'"(=:]|file:\/\/)(\/(?:Users|home)\/(?![<{]|(?:you|user|username)(?:\/|\b))[A-Za-z0-9._-]+\/[^\s`'")>\]]*)/gm,
+    WIN_HOST_PATH_RE  = /(?:^|[\s`'"(=:]|file:\/\/\/?)([A-Za-z]:[\\/]Users[\\/](?![<{]|(?:you|user|username)(?:[\\/]|\b))[A-Za-z0-9._-]+[\\/][^\s`'")>\]]*)/gm,
     PRIVATE_REPO_RE   = /\bneomjs\/(?:business|neo-stage|neo-pro)\b/gi,
-    MD_LINK_RE        = /\[[^\]]*\]\(([^)#?\s]+\.md)(?:[?#][^)]*)?\)/g,
+    REL_LINK_RE       = /\[(?:[^\[\]]|\[[^\]]*\])*\]\(([^)\s]+)\)/g,
+    INLINE_CODE_RE    = /`[^`\n]+`/g,
     FENCE_RE          = /^ {0,3}(`{3,}|~{3,})/;
 
 /**
@@ -88,14 +88,14 @@ function lineAt(text, index) {
  * @param {Object} [options={}]
  * @param {String} [options.root=REPO_ROOT] Repository root directory.
  * @param {String} [options.manifestRelPath='docs/public-manifest.json'] Manifest path relative to `root`.
- * @param {String} [options.routePrefix=DEFAULT_PREFIX] Required canonical URL prefix for routes in this spoke.
+ * @param {String|null} [options.routePrefix=null] Optional route prefix override; defaults to `/learn/<treeMount.id>/`.
  * @param {String} [options.expectedSpoke=EXPECTED_SPOKE] Expected `spoke` identifier in the manifest.
  * @returns {{entryCount: Number, routes: String[]}}
  */
 export function lintPublicDocs({
     root            = REPO_ROOT,
     manifestRelPath = 'docs/public-manifest.json',
-    routePrefix     = DEFAULT_PREFIX,
+    routePrefix     = null,
     expectedSpoke   = EXPECTED_SPOKE
 } = {}) {
     const
@@ -122,8 +122,16 @@ export function lintPublicDocs({
     if (typeof manifest?.treeFile !== 'string' || !manifest.treeFile.trim()) {
         errors.push('treeFile must be a non-empty relative path')
     }
-    if (!manifest?.treeMount || typeof manifest.treeMount.id !== 'string' || typeof manifest.treeMount.name !== 'string') {
-        errors.push('treeMount must declare string id and name fields')
+    if (
+        !manifest?.treeMount ||
+        typeof manifest.treeMount.id !== 'string' ||
+        !manifest.treeMount.id.trim() ||
+        manifest.treeMount.id.startsWith('/') ||
+        manifest.treeMount.id.endsWith('/') ||
+        manifest.treeMount.id.includes('..') ||
+        typeof manifest.treeMount.name !== 'string'
+    ) {
+        errors.push('treeMount must declare normalized string id and name fields')
     }
     if (!Array.isArray(manifest?.entries) || manifest.entries.length === 0) {
         errors.push('entries must be a non-empty array')
@@ -132,6 +140,8 @@ export function lintPublicDocs({
     if (errors.length > 0) {
         throw new Error(`[public-docs] ${manifestRelPath} failed header validation:\n  - ${errors.join('\n  - ')}`)
     }
+
+    const effectivePrefix = routePrefix ?? `/learn/${manifest.treeMount.id}/`;
 
     const treePath = path.resolve(root, manifest.treeFile);
     if (!fs.existsSync(treePath)) {
@@ -155,8 +165,18 @@ export function lintPublicDocs({
     }
 
     const
-        seenFiles  = new Set(),
-        seenRoutes = new Set();
+        seenFiles        = new Set(),
+        seenRoutes       = new Set(),
+        admittedAbsFiles = new Set();
+
+    for (const entry of manifest.entries) {
+        if (entry && typeof entry.file === 'string' && !entry.file.includes('..') && entry.file.startsWith('learn/') && entry.file.endsWith('.md')) {
+            const absCandidate = path.resolve(root, entry.file);
+            if (absCandidate.startsWith(learnRoot + path.sep) && fs.existsSync(absCandidate) && fs.statSync(absCandidate).isFile()) {
+                admittedAbsFiles.add(absCandidate)
+            }
+        }
+    }
 
     for (const [index, entry] of manifest.entries.entries()) {
         const label = `entries[${index}]`;
@@ -177,13 +197,13 @@ export function lintPublicDocs({
         }
         seenFiles.add(entry.file);
 
-        if (!entry.route.startsWith(routePrefix) || entry.route.endsWith('/') || entry.route.endsWith('.md') || entry.route.includes('..')) {
-            errors.push(`${label}: invalid route "${entry.route}" (must start with "${routePrefix}" without trailing "/" or ".md")`)
+        if (!entry.route.startsWith(effectivePrefix) || entry.route.endsWith('/') || entry.route.endsWith('.md') || entry.route.includes('..')) {
+            errors.push(`${label}: invalid route "${entry.route}" (must start with "${effectivePrefix}" without trailing "/" or ".md")`)
         }
 
         const expectedId = treeLeafByFile.get(entry.file);
-        if (expectedId && entry.route !== `${routePrefix}${expectedId}`) {
-            errors.push(`${label}: route "${entry.route}" does not match pre-split tree route "${routePrefix}${expectedId}"`)
+        if (expectedId && entry.route !== `${effectivePrefix}${expectedId}`) {
+            errors.push(`${label}: route "${entry.route}" does not match pre-split tree route "${effectivePrefix}${expectedId}"`)
         }
 
         if (seenRoutes.has(entry.route)) {
@@ -220,15 +240,23 @@ export function lintPublicDocs({
             errors.push(`${entry.file}:${line}: forbidden private-repository reference "${match[0]}"`)
         }
 
-        MD_LINK_RE.lastIndex = 0;
-        for (const match of proseOnly.matchAll(MD_LINK_RE)) {
-            const target = match[1];
-            if (/^(?:https?:|mailto:)/i.test(target) || target.startsWith('/')) continue;
+        const linkScanText = proseOnly.replace(INLINE_CODE_RE, match => ' '.repeat(match.length));
 
-            const resolvedTarget = path.resolve(path.dirname(absFile), target);
-            if (!resolvedTarget.startsWith(learnRoot + path.sep) || !fs.existsSync(resolvedTarget)) {
-                const line = lineAt(proseOnly, match.index);
-                errors.push(`${entry.file}:${line}: broken relative Markdown link "${target}"`)
+        REL_LINK_RE.lastIndex = 0;
+        for (const match of linkScanText.matchAll(REL_LINK_RE)) {
+            const
+                rawTarget = match[1],
+                target    = rawTarget.split(/[?#]/)[0];
+
+            if (!target || /^(?:https?:|mailto:)/i.test(rawTarget) || rawTarget.startsWith('#') || rawTarget.startsWith('/')) continue;
+
+            const
+                resolvedExact = path.resolve(path.dirname(absFile), target),
+                resolvedMd    = target.endsWith('.md') ? resolvedExact : path.resolve(path.dirname(absFile), `${target}.md`);
+
+            if (!admittedAbsFiles.has(resolvedExact) && !admittedAbsFiles.has(resolvedMd)) {
+                const line = lineAt(linkScanText, match.index);
+                errors.push(`${entry.file}:${line}: broken relative Markdown link "${target}" (must resolve to a manifest-admitted guide)`)
             }
         }
     }

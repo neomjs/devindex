@@ -5,7 +5,7 @@
     "treeMount": {
         "parentId": "Guides",
         "id"      : "guides/devindex",
-        "name"    : "DevIndex"
+        "name"    : "DevIndex App"
     },
     "entries"  : [
         {"file": "learn/Introduction.md",                "route": "/learn/guides/devindex/Introduction"},

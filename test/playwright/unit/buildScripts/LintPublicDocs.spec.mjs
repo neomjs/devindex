@@ -50,7 +50,7 @@ function createFixture({
         schema   : 'public-manifest.v1',
         spoke    : 'neomjs/devindex',
         treeFile : 'learn/tree.json',
-        treeMount: {parentId: 'Guides', id: 'guides/devindex', name: 'DevIndex'},
+        treeMount: {parentId: 'Guides', id: 'guides/devindex', name: 'DevIndex App'},
         entries
     }, null, 4));
 

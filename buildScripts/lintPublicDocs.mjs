@@ -6,7 +6,7 @@ import {fileURLToPath} from 'node:url';
 /**
  * @module buildScripts.lintPublicDocs
  * @summary Validates `docs/public-manifest.json` against `learn/tree.json` and enforces public-publish hygiene across
- * every manifest-admitted Markdown guide (`neomjs/neo` Discussion #20920 `A0 + A1`, `neomjs/devindex#161`).
+ * every manifest-admitted Markdown guide.
  *
  * Default-deny spoke federation requires two guarantees:
  * 1. **Structural parity:** Every `learn/tree.json` leaf is explicitly listed in `docs/public-manifest.json` at its

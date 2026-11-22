@@ -1,0 +1,38 @@
+{
+    "schema"   : "public-manifest.v1",
+    "spoke"    : "neomjs/devindex",
+    "treeFile" : "learn/tree.json",
+    "treeMount": {
+        "parentId": "Guides",
+        "id"      : "guides/devindex",
+        "name"    : "DevIndex"
+    },
+    "entries"  : [
+        {"file": "learn/Introduction.md",                "route": "/learn/guides/devindex/Introduction"},
+        {"file": "learn/EthicalManifesto.md",            "route": "/learn/guides/devindex/EthicalManifesto"},
+        {"file": "learn/Methodology.md",                 "route": "/learn/guides/devindex/Methodology"},
+        {"file": "learn/OptIn.md",                       "route": "/learn/guides/devindex/OptIn"},
+        {"file": "learn/OptOut.md",                      "route": "/learn/guides/devindex/OptOut"},
+        {"file": "learn/UserGuide.md",                   "route": "/learn/guides/devindex/UserGuide"},
+        {"file": "learn/personas/TalentScouts.md",       "route": "/learn/guides/devindex/personas/TalentScouts"},
+        {"file": "learn/personas/DataScientists.md",     "route": "/learn/guides/devindex/personas/DataScientists"},
+        {"file": "learn/personas/PolicyMakers.md",       "route": "/learn/guides/devindex/personas/PolicyMakers"},
+        {"file": "learn/data-factory/Intro.md",          "route": "/learn/guides/devindex/data-factory/Intro"},
+        {"file": "learn/data-factory/Orchestrator.md",   "route": "/learn/guides/devindex/data-factory/Orchestrator"},
+        {"file": "learn/data-factory/Storage.md",        "route": "/learn/guides/devindex/data-factory/Storage"},
+        {"file": "learn/data-factory/GitHubAPI.md",      "route": "/learn/guides/devindex/data-factory/GitHubAPI"},
+        {"file": "learn/data-factory/Engine.md",         "route": "/learn/guides/devindex/data-factory/Engine"},
+        {"file": "learn/data-factory/Updater.md",        "route": "/learn/guides/devindex/data-factory/Updater"},
+        {"file": "learn/data-factory/DataEnrichment.md", "route": "/learn/guides/devindex/data-factory/DataEnrichment"},
+        {"file": "learn/data-factory/DataHygiene.md",    "route": "/learn/guides/devindex/data-factory/DataHygiene"},
+        {"file": "learn/data-factory/OptIn.md",          "route": "/learn/guides/devindex/data-factory/OptIn"},
+        {"file": "learn/data-factory/OptOut.md",         "route": "/learn/guides/devindex/data-factory/OptOut"},
+        {"file": "learn/Backend.md",                     "route": "/learn/guides/devindex/Backend"},
+        {"file": "learn/frontend/Architecture.md",       "route": "/learn/guides/devindex/frontend/Architecture"},
+        {"file": "learn/frontend/TheGrid.md",            "route": "/learn/guides/devindex/frontend/TheGrid"},
+        {"file": "learn/frontend/StateAndControls.md",   "route": "/learn/guides/devindex/frontend/StateAndControls"},
+        {"file": "learn/frontend/OffscreenCanvas.md",    "route": "/learn/guides/devindex/frontend/OffscreenCanvas"},
+        {"file": "learn/frontend/ContentEngine.md",      "route": "/learn/guides/devindex/frontend/ContentEngine"},
+        {"file": "learn/FAQ.md",                         "route": "/learn/guides/devindex/FAQ"}
+    ]
+}

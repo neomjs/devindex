@@ -38,6 +38,9 @@ jobs:
       - name: Assert no derived data is tracked
         run: npm run check-data-tracking
 
+      - name: Lint public documentation manifest
+        run: npm run lint-public-docs
+
       # `npm ci` above ran the postinstall linker, so this asserts the projection actually happened
       # rather than re-doing it: both skill surfaces point at the installed package, and no skill
       # byte is tracked here. An `--ignore-scripts` install resolves the dependency without linking

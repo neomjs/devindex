@@ -28,6 +28,7 @@
         "devindex:spider"                      : "node ./services/cli.mjs spider",
         "devindex:update"                      : "node ./services/cli.mjs update --limit 200",
         "generate-docs-json"                   : "node ./node_modules/neo.mjs/buildScripts/docs/jsdocx.mjs",
+        "lint-public-docs"                     : "node ./buildScripts/lintPublicDocs.mjs",
         "server-start"                         : "webpack serve -c ./node_modules/neo.mjs/buildScripts/webpack/webpack.server.config.mjs --open",
         "test-e2e"                            : "playwright test -c test/playwright/playwright.config.e2e.mjs",
         "test-unit"                            : "playwright test -c test/playwright/playwright.config.unit.mjs",

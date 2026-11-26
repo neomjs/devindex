@@ -153,6 +153,7 @@ function createLongTaskTracker() {
     let obs         = null;
     try {
         obs = new PerformanceObserver((list) => {
+            if (!obs) return;
             for (const entry of list.getEntries()) {
                 if (typeof entry.duration === 'number' && Number.isFinite(entry.duration)) {
                     durations.push(entry.duration);
@@ -162,6 +163,7 @@ function createLongTaskTracker() {
         obs.observe({ type: 'longtask', buffered: false });
     } catch {
         return {
+            isActive: () => false,
             stop() {
                 return { supported: false, count: null, maxMs: null, totalMs: null };
             }
@@ -171,7 +173,9 @@ function createLongTaskTracker() {
     return {
         isActive: () => Boolean(obs),
         stop() {
+            const current = obs;
             obs = null;
+            try { current?.disconnect(); } catch { /* ignore */ }
             return {
                 supported: true,
                 count    : durations.length,
@@ -498,14 +502,24 @@ function getGlobalNonEmptyFlights() {
 }
 
 function readStreamRowCount() {
-    const statsText = document.querySelector('.devindex-stats-container')?.textContent || '';
-    const match     = statsText.match(/Visible Rows:\s*([\d,]+)/i);
-    if (match) {
-        const parsed = Number(match[1].replace(/,/g, ''));
-        if (Number.isFinite(parsed)) return parsed;
+    const gridEl = document.querySelector('[role="grid"]');
+    const rawAttr = gridEl?.getAttribute('aria-rowcount');
+    if (rawAttr !== null && rawAttr !== undefined && rawAttr !== '') {
+        const ariaRows = Number(rawAttr);
+        if (Number.isFinite(ariaRows) && ariaRows > 0) {
+            return Math.max(0, ariaRows - 1);
+        }
     }
-    const ariaRows = Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount') || 0);
-    return ariaRows > 0 ? Math.max(0, ariaRows - 1) : 0;
+    const statsText = document.querySelector('.devindex-stats-container')?.textContent || '';
+    const match     = statsText.match(/Visible Rows:\s*([\d.,'’\s\u00A0\u202F_]+)/i);
+    if (match) {
+        const digits = match[1].replace(/\D+/g, '');
+        if (digits.length > 0) {
+            const parsed = Number(digits);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return 0;
 }
 
 function measureProbe(name, action, condition, optsOrTimeout = 30000) {
@@ -1710,6 +1724,7 @@ async function initDeviceBenchmarkHud() {
         getHeaderSortDirection,
         readStreamRowCount,
         measureProbe,
+        createLongTaskTracker,
         createFrameAndBlankTracker,
         runGridDragScrollStrokes,
         formatSeriesMarkdown,

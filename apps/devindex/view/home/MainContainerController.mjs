@@ -58,12 +58,12 @@ class MainContainerController extends Controller {
     }
 
     /**
-     *
+     * @summary Wires grid view selection and controls tab listeners once the component hierarchy is constructed.
      */
     onComponentConstructed() {
         let me = this;
 
-        me.getReference('grid').body.on('select', me.onGridSelect, me);
+        me.getReference('grid').view.on('select', me.onGridSelect, me);
 
         me.getReference('controls-tab-container').on('activeIndexChange', me.onControlsTabChange, me);
 
@@ -178,10 +178,11 @@ class MainContainerController extends Controller {
     }
 
     /**
+     * @summary Updates the v14 `Neo.grid.View#selectionModel` when the user switches selection modes.
      * @param {Object} data
      */
     onSelectionModelChange(data) {
-        this.getReference('grid').body.selectionModel = data.component.selectionModel
+        this.getReference('grid').view.selectionModel = data.component.selectionModel
     }
 
     /**

@@ -54,7 +54,7 @@
         }
     }
 
-    // find parallel class hide-sidebar
+    /* find parallel class hide-sidebar */
     &:has(+div .hide-sidebar) .separate-bar {
         animation: fade-out-animation 200ms linear forwards;
     }
@@ -74,7 +74,7 @@
 @keyframes fade-in-animation {
     from {
         opacity: 0;
-        right  : -30px
+        right  : -30px;
     }
     to {
         opacity: 1;
@@ -89,7 +89,7 @@
     }
     to {
         opacity: 0;
-        right  : -30px
+        right  : -30px;
     }
 }
 

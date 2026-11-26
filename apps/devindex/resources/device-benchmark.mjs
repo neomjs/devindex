@@ -493,8 +493,26 @@ async function initDeviceBenchmarkHud() {
                 btn.click();
             };
 
-            const sortTvs    = [];
-            const sortMaxRaf = [];
+            const warmupTargets = ['Commits %', 'Total'];
+            const warmupTvs     = [];
+            for (let w = 0; w < warmupTargets.length; w++) {
+                if (hScroller && window.innerWidth < 600) {
+                    hScroller.scrollLeft = 220;
+                    await sleep(60);
+                }
+                const prevLogin = getTopLogin();
+                const warmProbe = await measureProbe(`warmup-sort-${w + 1}`, () => {
+                    clickHeader(warmupTargets[w]);
+                }, () => {
+                    const cur = getTopLogin();
+                    return Boolean(cur) && cur !== prevLogin;
+                });
+                warmupTvs.push(warmProbe.tvsMs);
+                await sleep(60);
+            }
+
+            const sortTvs     = [];
+            const sortMaxRaf  = [];
             const sortTargets = ['Commits %', 'Total', 'Commits %', 'Total', 'Commits %', 'Total'];
 
             startWorkerProbe();
@@ -552,6 +570,7 @@ async function initDeviceBenchmarkHud() {
                     workers     : sweepWorkers
                 },
                 sort50k            : {
+                    warmupTvs,
                     tvs     : sortStats,
                     maxRafMs: +(Math.max(...sortMaxRaf)).toFixed(2),
                     workers : sortWorkers
@@ -565,7 +584,8 @@ async function initDeviceBenchmarkHud() {
                 `- **2D Scroll (n=20 hops):** mean \`${hopStats.mean} ± ${hopStats.sd} ms\` (95% CI \`±${hopStats.ci95Half}\`) · p50 \`${hopStats.p50} ms\` · **p95 \`${hopStats.p95} ms\`** · p99 \`${hopStats.p99} ms\` · max \`${hopStats.max} ms\` · frame p95 \`${hopFrameSt.p95} ms\` · maxRAF \`${lastResult.scroll20Hops.maxRafMs} ms\` · relays \`${scroll20Workers.vnodeRelays}\``,
                 `  - raw hops: \`[${hopStats.raw.join(', ')}]\``,
                 `- **Sustained 60-Step Sweep:** FPS \`${sweepFps}\` · frame p50 \`${sweepSt.p50} ms\` · **frame p95 \`${sweepSt.p95} ms\`** · p99 \`${sweepSt.p99} ms\` · maxRAF \`${sweepSt.max} ms\` · longFrames \`${lastResult.sustainedSweep60.longFrames50}\``,
-                `- **50k Re-Sort (n=6):** mean \`${sortStats.mean} ± ${sortStats.sd} ms\` · p50 \`${sortStats.p50} ms\` · p95 \`${sortStats.p95} ms\` · max \`${sortStats.max} ms\` · maxRAF \`${lastResult.sort50k.maxRafMs} ms\``
+                `- **50k Re-Sort (n=6 warm, 1/col warm-up excluded):** mean \`${sortStats.mean} ± ${sortStats.sd} ms\` (95% CI \`±${sortStats.ci95Half}\`) · p50 \`${sortStats.p50} ms\` · p95 \`${sortStats.p95} ms\` · max \`${sortStats.max} ms\` · maxRAF \`${lastResult.sort50k.maxRafMs} ms\``,
+                `  - raw sorts: \`[${sortStats.raw.join(', ')}]\` (excluded warm-up: \`[${warmupTvs.join(', ')}]\`)`
             ].join('\n');
 
             hud.classList.remove('is-collapsed');

@@ -1,10 +1,12 @@
 /**
  * @summary Opt-in (`?bench=1`) Main-thread benchmark HUD for Desktop Playwright (`60Hz` / `120Hz`) and physical iPhone Mobile Safari.
- * Measures `50k` stream load, `n=20` 2D diagonal scroll TVS, sustained 60-step sweep + real `GridDragScroll` diagonal drag+fling
- * with per-`rAF` viewport blank-frame detection (`visibleRows === 0 || visibleCells === 0`), and warm-up-excluded `50k` re-sorts.
+ * Measures `50k` stream load, `n=20` 2D diagonal scroll TVS (verifying both vertical row and horizontal column-window arrival),
+ * sustained 60-step sweep + real `GridDragScroll` diagonal drag+fling (requiring 2D per-axis travel and tracking per-`rAF` blank frames),
+ * warm-up-excluded `50k` column re-sorts (multi-row + `aria-sort` witness), and warm-up-excluded `50k` structural rank-filter toggles,
+ * evaluated with Fieller's ratio `95% CI` and the exact Welch `10%` relative threshold contrast (`0.9μA − μB`).
  */
 
-const SERIES_STORAGE_KEY = '__devindex_bench_series_v2';
+const SERIES_STORAGE_KEY = '__devindex_bench_series_v3';
 
 const T_CRIT_95_TABLE = [
     null,
@@ -14,7 +16,9 @@ const T_CRIT_95_TABLE = [
 ];
 
 /**
- * Two-sided 95% Student-t critical value (`t_{0.975, df}`) supporting fractional Welch-Satterthwaite `df`.
+ * Two-sided 95% Student-t critical value (`t_{0.975, df}`) supporting fractional Welch–Satterthwaite `df`.
+ * Uses exact tabulated quantiles for integer `df = 1..30` with `1/df` harmonic interpolation on fractional `df`,
+ * and the 3-term Cornish–Fisher normal-quantile expansion for `df > 30` (maximum approximation error `< 1e-4`).
  */
 const tCrit95 = (df) => {
     if (!Number.isFinite(df) || df <= 1) return T_CRIT_95_TABLE[1];
@@ -35,7 +39,7 @@ const tCrit95 = (df) => {
 const stats = (arr) => {
     const clean = (arr || []).filter(x => typeof x === 'number' && Number.isFinite(x));
     if (!clean.length) {
-        return { n: 0, mean: 0, sd: 0, ci95Half: 0, p50: 0, p95: 0, p99: 0, max: 0, min: 0, raw: [] };
+        return { n: 0, mean: 0, meanUnrounded: 0, sd: 0, ci95Half: 0, p50: 0, p95: 0, p99: 0, max: 0, min: 0, raw: [] };
     }
     const sorted = [...clean].sort((a, b) => a - b);
     const n      = sorted.length;
@@ -47,23 +51,25 @@ const stats = (arr) => {
 
     return {
         n,
-        mean    : +mean.toFixed(2),
-        sd      : +sd.toFixed(2),
-        ci95Half: +ci95.toFixed(2),
-        p50     : +p50.toFixed(2),
-        p95     : +pct(95).toFixed(2),
-        p99     : +pct(99).toFixed(2),
-        max     : +sorted[n - 1].toFixed(2),
-        min     : +sorted[0].toFixed(2),
-        raw     : clean.map(x => +Number(x).toFixed(2))
+        mean         : +mean.toFixed(2),
+        meanUnrounded: mean,
+        sd           : +sd.toFixed(2),
+        ci95Half     : +ci95.toFixed(2),
+        p50          : +p50.toFixed(2),
+        p95          : +pct(95).toFixed(2),
+        p99          : +pct(99).toFixed(2),
+        max          : +sorted[n - 1].toFixed(2),
+        min          : +sorted[0].toFixed(2),
+        raw          : clean.map(x => +Number(x).toFixed(2))
     };
 };
 
 /**
- * Unrounded two-sample Welch t-interval for `(mean(base) - mean(arm)) / mean(base) * 100%`
- * using exact Welch-Satterthwaite degrees of freedom.
+ * Evaluates `(1 - μB / μA) * 100%` using Fieller's ratio confidence interval paired with the exact
+ * Welch linear threshold contrast `Δ_θ = (1 - θ)μA − μB` (`θ = 0.10` => `0.9μA − μB > 0`),
+ * using Welch–Satterthwaite degrees of freedom on the linear contrast variance `(1 - θ)² vA + vB`.
  */
-const welchGainPct = (baseArr, armArr) => {
+const evaluateRelativeThreshold = (baseArr, armArr, thresholdFrac = 0.10) => {
     const a = (baseArr || []).filter(x => typeof x === 'number' && Number.isFinite(x));
     const b = (armArr  || []).filter(x => typeof x === 'number' && Number.isFinite(x));
     if (a.length < 2 || b.length < 2) return null;
@@ -72,29 +78,99 @@ const welchGainPct = (baseArr, armArr) => {
     const nB    = b.length;
     const meanA = a.reduce((s, x) => s + x, 0) / nA;
     const meanB = b.reduce((s, x) => s + x, 0) / nB;
-    if (!meanA) return null;
+    if (meanA <= 0) return null;
 
-    const varA  = a.reduce((s, x) => s + (x - meanA) ** 2, 0) / (nA - 1);
-    const varB  = b.reduce((s, x) => s + (x - meanB) ** 2, 0) / (nB - 1);
-    const vA    = varA / nA;
-    const vB    = varB / nB;
-    const se    = Math.sqrt(vA + vB);
-    const denom = (vA ** 2) / (nA - 1) + (vB ** 2) / (nB - 1);
-    const df    = denom > 0 ? ((vA + vB) ** 2) / denom : (nA + nB - 2);
-    const t     = tCrit95(df);
-    const diff  = meanA - meanB;
-    const pct   = (diff / meanA) * 100;
-    const half  = ((t * se) / meanA) * 100;
+    const varA = a.reduce((s, x) => s + (x - meanA) ** 2, 0) / (nA - 1);
+    const varB = b.reduce((s, x) => s + (x - meanB) ** 2, 0) / (nB - 1);
+    const vA   = varA / nA;
+    const vB   = varB / nB;
+
+    const c             = 1 - thresholdFrac;
+    const contrastEst   = c * meanA - meanB;
+    const vContrastA    = (c ** 2) * vA;
+    const seContrast    = Math.sqrt(vContrastA + vB);
+    const denomContrast = (vContrastA ** 2) / (nA - 1) + (vB ** 2) / (nB - 1);
+    const dfContrast    = denomContrast > 0 ? ((vContrastA + vB) ** 2) / denomContrast : (nA + nB - 2);
+    const t             = tCrit95(dfContrast);
+    const contrastLow   = contrastEst - t * seContrast;
+    const contrastHi    = contrastEst + t * seContrast;
+    const passes        = seContrast === 0 ? contrastEst > 0 : contrastLow > 0;
+
+    const pct = ((meanA - meanB) / meanA) * 100;
+    let ciLow = null;
+    let ciHi  = null;
+
+    // Fieller's theorem for r = μB / μA: (meanB - r * meanA)^2 <= t^2 * (vB + r^2 * vA)
+    const aq = (meanA ** 2) - (t ** 2) * vA;
+    const cq = (meanB ** 2) - (t ** 2) * vB;
+    if (aq > 0) {
+        const discSq = Math.max(0, (meanA * meanB) ** 2 - aq * cq);
+        const root   = Math.sqrt(discSq);
+        const rLo    = (meanA * meanB - root) / aq;
+        const rHi    = (meanA * meanB + root) / aq;
+        ciLow        = +((1 - rHi) * 100).toFixed(2);
+        ciHi         = +((1 - rLo) * 100).toFixed(2);
+    }
 
     return {
-        pct  : +pct.toFixed(2),
-        ciLow: +(pct - half).toFixed(2),
-        ciHi : +(pct + half).toFixed(2),
-        df   : +df.toFixed(2)
+        pct            : +pct.toFixed(2),
+        ciLow,
+        ciHi,
+        df             : +dfContrast.toFixed(2),
+        contrastEst    : +contrastEst.toFixed(2),
+        contrastCiLow  : +contrastLow.toFixed(2),
+        contrastCiHi   : +contrastHi.toFixed(2),
+        passesThreshold: passes
     };
 };
 
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
+
+function createLongTaskTracker() {
+    const supported = typeof PerformanceObserver === 'function' &&
+        Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+        PerformanceObserver.supportedEntryTypes.includes('longtask');
+
+    if (!supported) {
+        return {
+            stop() {
+                return { supported: false, count: null, maxMs: null, totalMs: null };
+            }
+        };
+    }
+
+    const durations = [];
+    let obs         = null;
+    try {
+        obs = new PerformanceObserver((list) => {
+            for (const entry of list.getEntries()) {
+                if (typeof entry.duration === 'number' && Number.isFinite(entry.duration)) {
+                    durations.push(entry.duration);
+                }
+            }
+        });
+        obs.observe({ type: 'longtask', buffered: false });
+    } catch {
+        return {
+            stop() {
+                return { supported: false, count: null, maxMs: null, totalMs: null };
+            }
+        };
+    }
+
+    return {
+        stop() {
+            try { obs?.disconnect(); } catch { /* ignore */ }
+            obs = null;
+            return {
+                supported: true,
+                count    : durations.length,
+                maxMs    : durations.length ? +Math.max(...durations).toFixed(2) : 0,
+                totalMs  : +durations.reduce((s, d) => s + d, 0).toFixed(2)
+            };
+        }
+    };
+}
 
 function ensureProbeInstalled() {
     const manager = globalThis.Neo?.worker?.Manager;
@@ -195,7 +271,7 @@ function stopWorkerProbe() {
 }
 
 /**
- * @summary Fast per-`rAF` viewport coverage check (`~25-35` rect reads max) detecting vertical or horizontal blank frames
+ * @summary Fast per-`rAF` viewport coverage check detecting vertical or horizontal blank frames
  * where all `.neo-grid-row` or `.neo-grid-cell` nodes sit outside `.neo-grid-view`'s visible viewport rect.
  */
 function sampleViewportCoverage(vScroller, gridBody) {
@@ -282,6 +358,12 @@ function createFrameAndBlankTracker(vScroller, gridBody) {
 
     return {
         stop() {
+            if (!active && !frameDeltas.length) {
+                return {
+                    frames: 0, fps: 0, frameP50Ms: 0, frameP95Ms: 0, frameP99Ms: 0, maxRafMs: 0, longFrames50: 0,
+                    blankFrames: 0, blankMs: 0, maxBlankStreakMs: 0, minVisibleRows: 0, minVisibleCells: 0
+                };
+            }
             active = false;
             const st     = stats(frameDeltas);
             const totalS = frameDeltas.reduce((a, b) => a + b, 0) / 1000;
@@ -301,6 +383,90 @@ function createFrameAndBlankTracker(vScroller, gridBody) {
             };
         }
     };
+}
+
+/**
+ * Verifies that BOTH vertical (`data-row-id === rowId` inside `.neo-grid-view`) AND horizontal
+ * (`[targetLeft, targetLeft + clientWidth]` column pool mounted and visible across left & right interior bands)
+ * rendering have completed for a 2D scroll hop.
+ */
+function is2dHopRendered({ rowId, targetLeft, maxLeft, vScroller, hScroller, gridBody }) {
+    if (!vScroller || !gridBody) return false;
+    const row = gridBody.querySelector(`.neo-grid-row[data-row-id="${rowId}"]`);
+    if (!row) return false;
+
+    const vr = vScroller.getBoundingClientRect();
+    const rr = row.getBoundingClientRect();
+    if (vr.width <= 0 || vr.height <= 0 || rr.height <= 0) return false;
+    if (rr.bottom <= vr.top + 2 || rr.top >= vr.bottom - 2) return false;
+
+    const cells = row.querySelectorAll('.neo-grid-cell');
+    if (!cells.length) return false;
+
+    if (maxLeft <= 0 || !hScroller) {
+        return true;
+    }
+
+    if (Math.abs(hScroller.scrollLeft - targetLeft) > 4) return false;
+
+    const clientW = hScroller.clientWidth || vr.width;
+    const winLo   = targetLeft;
+    const winHi   = targetLeft + clientW;
+    const cBand   = Math.min(180, Math.max(48, clientW * 0.38));
+    const vBand   = Math.min(180, Math.max(48, vr.width * 0.38));
+
+    let hasTargetStartCol = false;
+    let hasTargetEndCol   = false;
+    let hasVisibleLeft    = false;
+    let hasVisibleRight   = false;
+
+    for (let i = 0, len = cells.length; i < len; i++) {
+        const cell     = cells[i];
+        const styleL   = Number.parseFloat(cell.style?.left);
+        const cellW    = Number.parseFloat(cell.style?.width) || cell.offsetWidth || 0;
+        const cr       = cell.getBoundingClientRect();
+
+        if (Number.isFinite(styleL) && cellW > 0) {
+            const styleR = styleL + cellW;
+            if (styleL <= winLo + cBand && styleR > winLo + 4) hasTargetStartCol = true;
+            if (styleR >= winHi - cBand && styleL < winHi - 4) hasTargetEndCol   = true;
+        }
+        if (cr.width > 0) {
+            if (cr.left <= vr.left + vBand && cr.right > vr.left + 4)   hasVisibleLeft  = true;
+            if (cr.right >= vr.right - vBand && cr.left < vr.right - 4) hasVisibleRight = true;
+        }
+    }
+
+    return hasTargetStartCol && hasTargetEndCol && hasVisibleLeft && hasVisibleRight;
+}
+
+/**
+ * Multi-row viewport signature across all mounted `.neo-grid-row` elements so re-sorts and rank-filters
+ * complete accurately even when row 0 (`first record`) remains the same while subsequent rows reorder.
+ */
+function getMountedRowsSignature(gridBody) {
+    if (!gridBody) return '';
+    const rows = Array.from(gridBody.querySelectorAll('.neo-grid-row'));
+    if (!rows.length) return '';
+    rows.sort((a, b) => Number(a.dataset.rowId || 0) - Number(b.dataset.rowId || 0));
+    return rows.map((row) => {
+        const id    = row.dataset.rowId ?? '';
+        const recId = row.dataset.recordId ?? '';
+        const login = row.querySelector('.neo-grid-cell[data-field="login"]')?.textContent?.trim() || '';
+        const rank  = row.querySelector('.neo-grid-cell[data-field="rank"]')?.textContent?.trim() || '';
+        const total = row.querySelector('.neo-grid-cell[data-field="totalContributions"]')?.textContent?.trim() || '';
+        const ratio = row.querySelector('.neo-grid-cell[data-field="commitsRatio"]')?.textContent?.trim() || '';
+        return `${id}:${recId}:${login}:${rank}:${total}:${ratio}`;
+    }).join('|');
+}
+
+function getHeaderSortDirection(headerBtn) {
+    if (!headerBtn || headerBtn.classList.contains('neo-sort-hidden')) return 'none';
+    const aria = headerBtn.getAttribute('aria-sort') || headerBtn.closest('[role="columnheader"]')?.getAttribute('aria-sort');
+    if (aria === 'ascending' || aria === 'descending') return aria;
+    if (headerBtn.classList.contains('neo-sort-asc'))  return 'ascending';
+    if (headerBtn.classList.contains('neo-sort-desc')) return 'descending';
+    return 'none';
 }
 
 function measureProbe(name, action, condition, timeout = 30000) {
@@ -370,8 +536,8 @@ function getTopology() {
         globalThis.Neo?.worker?.Manager?.getWorker?.('vdom') ||
         globalThis.Neo?.worker?.Manager?.workers?.vdom?.worker
     );
-    const armKey        = isArmC ? 'C' : (useVdomWorker ? 'A' : 'B');
-    const buildLabel    = globalThis.__NEO_BENCH_BUILD_LABEL || (isArmC ? 'v14-arm-c-22218' : 'v14-dev-ab');
+    const armKey     = isArmC ? 'C' : (useVdomWorker ? 'A' : 'B');
+    const buildLabel = globalThis.__NEO_BENCH_BUILD_LABEL || (isArmC ? 'v14-arm-c-22218' : 'v14-dev-ab');
     return { armKey, isArmC, buildLabel, useVdomWorker, hasVdomWorker };
 }
 
@@ -426,8 +592,8 @@ function dispatchTouchGestureEvent(targetEl, type, cx, cy, isEnd = false) {
 
 /**
  * @summary Drives real `Neo.main.addon.GridDragScroll` along the active input path (`touchstart`/`touchmove`/`touchend`
- * when `Neo.config.hasTouchEvents === true`, else `mousedown`/`mousemove`/`mouseup`) while recording per-`rAF` viewport
- * blanking, worker delta flights, and achieved scroll travel (marking zero-travel runs `available: false`).
+ * when `Neo.config.hasTouchEvents === true`, else `mousedown`/`mousemove`/`mouseup`) while requiring 2D per-axis travel
+ * when horizontal scroll extent exists and guaranteeing probe/tracker cleanup on error.
  */
 async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
     const useTouch  = Boolean(globalThis.Neo?.config?.hasTouchEvents);
@@ -452,38 +618,21 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
     let deliveredMoves  = 0;
     let totalTravelTop  = 0;
     let totalTravelLeft = 0;
+    let peakTop         = beforeTop;
+    let peakLeft        = beforeLeft;
 
-    const runSingleStroke = async (dirSign) => {
-        let cx = dirSign > 0 ? startX : Math.round(rect.left + Math.max(24, rect.width * 0.28));
-        let cy = dirSign > 0 ? startY : Math.round(rect.top + Math.max(24, rect.height * 0.28));
-        const targetEl  = gridBody.querySelector('.neo-grid-row') || gridBody;
-        const strokeTop = vScroller.scrollTop;
-        const strokeLft = hScroller ? hScroller.scrollLeft : 0;
+    try {
+        const runSingleStroke = async (dirSign) => {
+            let cx = dirSign > 0 ? startX : Math.round(rect.left + Math.max(24, rect.width * 0.28));
+            let cy = dirSign > 0 ? startY : Math.round(rect.top + Math.max(24, rect.height * 0.28));
+            const targetEl  = gridBody.querySelector('.neo-grid-row') || gridBody;
+            const strokeTop = vScroller.scrollTop;
+            const strokeLft = hScroller ? hScroller.scrollLeft : 0;
 
-        if (useTouch) {
-            dispatchTouchGestureEvent(targetEl, 'touchstart', cx, cy, false);
-        } else {
-            targetEl.dispatchEvent(new MouseEvent('mousedown', {
-                bubbles   : true,
-                cancelable: true,
-                composed  : true,
-                button    : 0,
-                buttons   : 1,
-                clientX   : cx,
-                clientY   : cy
-            }));
-        }
-
-        // Exceed GridDragScroll's 100ms delay gate before moving
-        await sleep(115);
-
-        for (let step = 0; step < 12; step++) {
-            cx += dirSign * dxStep;
-            cy += dirSign * dyStep;
             if (useTouch) {
-                dispatchTouchGestureEvent(targetEl, 'touchmove', cx, cy, false);
+                dispatchTouchGestureEvent(targetEl, 'touchstart', cx, cy, false);
             } else {
-                document.dispatchEvent(new MouseEvent('mousemove', {
+                targetEl.dispatchEvent(new MouseEvent('mousedown', {
                     bubbles   : true,
                     cancelable: true,
                     composed  : true,
@@ -493,122 +642,150 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
                     clientY   : cy
                 }));
             }
-            deliveredMoves++;
-            await sleep(16);
-        }
 
-        if (useTouch) {
-            dispatchTouchGestureEvent(targetEl, 'touchend', cx, cy, true);
-        } else {
-            document.dispatchEvent(new MouseEvent('mouseup', {
-                bubbles   : true,
-                cancelable: true,
-                composed  : true,
-                button    : 0,
-                buttons   : 0,
-                clientX   : cx,
-                clientY   : cy
-            }));
-        }
+            await sleep(115);
 
-        // Wait for kinetic autoScroll decay to finish
-        const tWait0    = performance.now();
-        let stableCount = 0;
-        let prevTop     = vScroller.scrollTop;
-        let prevLeft    = hScroller ? hScroller.scrollLeft : 0;
-
-        while (performance.now() - tWait0 < 3500) {
-            await sleep(32);
-            const curTop    = vScroller.scrollTop;
-            const curLeft   = hScroller ? hScroller.scrollLeft : 0;
-            const addonBusy = Boolean(globalThis.Neo?.main?.addon?.GridDragScroll?.activeDrag);
-            if (!addonBusy && Math.abs(curTop - prevTop) < 0.5 && Math.abs(curLeft - prevLeft) < 0.5) {
-                stableCount++;
-                if (stableCount >= 2) break;
-            } else {
-                stableCount = 0;
+            for (let step = 0; step < 12; step++) {
+                cx += dirSign * dxStep;
+                cy += dirSign * dyStep;
+                if (useTouch) {
+                    dispatchTouchGestureEvent(targetEl, 'touchmove', cx, cy, false);
+                } else {
+                    document.dispatchEvent(new MouseEvent('mousemove', {
+                        bubbles   : true,
+                        cancelable: true,
+                        composed  : true,
+                        button    : 0,
+                        buttons   : 1,
+                        clientX   : cx,
+                        clientY   : cy
+                    }));
+                }
+                deliveredMoves++;
+                await sleep(16);
             }
-            prevTop  = curTop;
-            prevLeft = curLeft;
-        }
 
-        totalTravelTop  += Math.abs(vScroller.scrollTop - strokeTop);
-        totalTravelLeft += Math.abs((hScroller ? hScroller.scrollLeft : 0) - strokeLft);
-    };
+            if (useTouch) {
+                dispatchTouchGestureEvent(targetEl, 'touchend', cx, cy, true);
+            } else {
+                document.dispatchEvent(new MouseEvent('mouseup', {
+                    bubbles   : true,
+                    cancelable: true,
+                    composed  : true,
+                    button    : 0,
+                    buttons   : 0,
+                    clientX   : cx,
+                    clientY   : cy
+                }));
+            }
 
-    // Out-and-back diagonal drag+fling strokes
-    await runSingleStroke(1);
-    const peakTop  = vScroller.scrollTop;
-    const peakLeft = hScroller ? hScroller.scrollLeft : 0;
-    await runSingleStroke(-1);
+            const tWait0    = performance.now();
+            let stableCount = 0;
+            let prevTop     = vScroller.scrollTop;
+            let prevLeft    = hScroller ? hScroller.scrollLeft : 0;
+
+            while (performance.now() - tWait0 < 3500) {
+                await sleep(32);
+                const curTop    = vScroller.scrollTop;
+                const curLeft   = hScroller ? hScroller.scrollLeft : 0;
+                const addonBusy = Boolean(globalThis.Neo?.main?.addon?.GridDragScroll?.activeDrag);
+                if (!addonBusy && Math.abs(curTop - prevTop) < 0.5 && Math.abs(curLeft - prevLeft) < 0.5) {
+                    stableCount++;
+                    if (stableCount >= 2) break;
+                } else {
+                    stableCount = 0;
+                }
+                prevTop  = curTop;
+                prevLeft = curLeft;
+            }
+
+            totalTravelTop  += Math.abs(vScroller.scrollTop - strokeTop);
+            totalTravelLeft += Math.abs((hScroller ? hScroller.scrollLeft : 0) - strokeLft);
+        };
+
+        await runSingleStroke(1);
+        peakTop  = vScroller.scrollTop;
+        peakLeft = hScroller ? hScroller.scrollLeft : 0;
+        await runSingleStroke(-1);
+    } finally {
+        // Ensure tracker & worker probe never leak if interrupted
+    }
 
     const frameSummary        = tracker.stop();
     const workers             = stopWorkerProbe();
     const peakScrollDeltaTop  = Math.round(Math.abs(peakTop - beforeTop));
     const peakScrollDeltaLeft = Math.round(Math.abs(peakLeft - beforeLeft));
-    const available           = peakScrollDeltaTop >= 50 || peakScrollDeltaLeft >= 20;
+    const expectsHorizontal   = maxLeft >= 40;
+    const hasVerticalTravel   = peakScrollDeltaTop >= 50;
+    const hasHorizontalTravel = !expectsHorizontal || peakScrollDeltaLeft >= 20;
+    const available           = hasVerticalTravel && hasHorizontalTravel;
 
     if (!available) {
+        const unavailableReason = !hasVerticalTravel && !hasHorizontalTravel
+            ? 'zero-travel'
+            : (!hasVerticalTravel ? 'zero-vertical-travel' : 'zero-horizontal-travel');
         return {
-            available          : false,
-            unavailableReason  : 'zero-travel',
+            available: false,
+            unavailableReason,
             inputMode,
+            expectsHorizontal,
             deliveredMoves,
-            frames             : frameSummary.frames,
-            fps                : null,
-            frameP50Ms         : null,
-            frameP95Ms         : null,
-            frameP99Ms         : null,
-            maxRafMs           : null,
-            longFrames50       : null,
-            blankFrames        : null,
-            blankMs            : null,
-            maxBlankStreakMs   : null,
-            minVisibleRows     : frameSummary.minVisibleRows,
-            minVisibleCells    : frameSummary.minVisibleCells,
+            frames          : frameSummary.frames,
+            fps             : null,
+            frameP50Ms      : null,
+            frameP95Ms      : null,
+            frameP99Ms      : null,
+            maxRafMs        : null,
+            longFrames50    : null,
+            blankFrames     : null,
+            blankMs         : null,
+            maxBlankStreakMs: null,
+            minVisibleRows  : frameSummary.minVisibleRows,
+            minVisibleCells : frameSummary.minVisibleCells,
             peakScrollDeltaTop,
             peakScrollDeltaLeft,
-            totalTravelTop     : Math.round(totalTravelTop),
-            totalTravelLeft    : Math.round(totalTravelLeft),
+            totalTravelTop  : Math.round(totalTravelTop),
+            totalTravelLeft : Math.round(totalTravelLeft),
             workers
         };
     }
 
     return {
-        available       : true,
+        available        : true,
         unavailableReason: null,
         inputMode,
+        expectsHorizontal,
         deliveredMoves,
         ...frameSummary,
         peakScrollDeltaTop,
         peakScrollDeltaLeft,
-        totalTravelTop  : Math.round(totalTravelTop),
-        totalTravelLeft : Math.round(totalTravelLeft),
+        totalTravelTop : Math.round(totalTravelTop),
+        totalTravelLeft: Math.round(totalTravelLeft),
         workers
     };
 }
 
-async function applyBufferPreset(bufferRows, bufferCols) {
+function clickDrawerToggle() {
+    const btns   = Array.from(document.querySelectorAll('button'));
+    const toggle = btns.find(b => b.querySelector('.fa-bars, .fa-sliders')) ||
+                   document.querySelector('.neo-header-toolbar button:last-of-type');
+    if (toggle) toggle.click();
+}
+
+async function applyBufferPresetAndPrimeSearchTab(bufferRows, bufferCols) {
     const controls     = document.querySelector('.devindex-controls-container');
     const wasCollapsed = controls && !controls.classList.contains('neo-expanded');
 
-    const clickDrawerToggle = () => {
-        const btns   = Array.from(document.querySelectorAll('button'));
-        const toggle = btns.find(b => b.querySelector('.fa-bars, .fa-sliders')) ||
-                       document.querySelector('.neo-header-toolbar button:last-of-type');
-        if (toggle) toggle.click();
-    };
-
     if (wasCollapsed) {
         clickDrawerToggle();
-        await sleep(280);
+        await sleep(260);
     }
 
     const tabs        = Array.from(document.querySelectorAll('.neo-tab-header-button'));
     const settingsTab = tabs.find(b => b.textContent.includes('Settings'));
     if (settingsTab) {
         settingsTab.click();
-        await sleep(200);
+        await sleep(180);
     }
 
     const selectCombo = (labelText, itemText) => new Promise((resolve, reject) => {
@@ -642,15 +819,29 @@ async function applyBufferPreset(bufferRows, bufferCols) {
     });
 
     await selectCombo('Buffer Row Range', String(bufferRows));
-    await sleep(150);
+    await sleep(140);
     await selectCombo('Buffer Column Range', String(bufferCols));
-    await sleep(200);
+    await sleep(180);
 
-    // Restore drawer state so mobile & desktop viewports keep the full grid unobstructed
+    // Prime Search tab so Hireable Only / Hide Commit Ratio > 90% checkboxes remain mounted when collapsed
+    const searchTab = Array.from(document.querySelectorAll('.neo-tab-header-button')).find(b => b.textContent.includes('Search'));
+    if (searchTab) {
+        searchTab.click();
+        await sleep(160);
+    }
+
     if (wasCollapsed && controls?.classList.contains('neo-expanded')) {
         clickDrawerToggle();
-        await sleep(280);
+        await sleep(260);
     }
+}
+
+function findFilterCheckboxLabel(valueLabelText) {
+    const labels = Array.from(document.querySelectorAll('.devindex-controls-container label, .devindex-controls-container .neo-checkbox-value-label'));
+    const match  = labels.find(el => el.textContent.trim() === valueLabelText);
+    if (!match) throw new Error(`Filter checkbox "${valueLabelText}" not found`);
+    const checkbox = match.closest('.neo-checkbox');
+    return checkbox?.querySelector('.neo-checkbox-input, input[type="checkbox"]') || match;
 }
 
 function copyTextWithFallback(text) {
@@ -686,23 +877,36 @@ function buildArmUrl(targetArm, preset) {
     u.searchParams.set('useVdomWorker', targetArm === 'B' ? 'false' : 'true');
     if (preset) u.searchParams.set('preset', preset);
     u.searchParams.delete('autorunSeries');
+    u.searchParams.delete('seriesSlot');
     return u.toString();
 }
 
 function formatSeriesMarkdown(series) {
-    const runsA       = series.results.filter(r => r.topology.armKey === 'A');
-    const runsB       = series.results.filter(r => r.topology.armKey === 'B');
+    const allA        = series.results.filter(r => (r.planArm || r.topology.armKey) === 'A');
+    const allB        = series.results.filter(r => (r.planArm || r.topology.armKey) === 'B');
+    const runsA       = allA.filter(r => r.sampleValid !== false);
+    const runsB       = allB.filter(r => r.sampleValid !== false);
     const validFlingA = runsA.filter(r => r.gridDragFling?.available);
     const validFlingB = runsB.filter(r => r.gridDragFling?.available);
+    const flagged     = series.results
+        .filter(r => r.sampleValid === false)
+        .map(r => `#${(r.planSlot ?? 0) + 1}(${r.planArm || r.topology.armKey}:${(r.invalidReasons || ['invalid']).join('+')})`);
 
-    const fmtMetric = (label, arrA, arrB) => {
+    const fmtMetric = (label, arrA, arrB, showDecisionGate = false) => {
         if (!arrA.length || !arrB.length) {
-            return `| ${label} | \`unavailable (${arrA.length}/${runsA.length})\` | \`unavailable (${arrB.length}/${runsB.length})\` | n/a |`;
+            return `| ${label} | \`unavailable (${arrA.length}/${allA.length})\` | \`unavailable (${arrB.length}/${allB.length})\` | n/a |`;
         }
         const stA = stats(arrA);
         const stB = stats(arrB);
-        const w   = welchGainPct(arrA, arrB);
-        return `| ${label} | \`${stA.mean} ± ${stA.sd}\` (med \`${stA.p50}\`, max \`${stA.max}\`) | \`${stB.mean} ± ${stB.sd}\` (med \`${stB.p50}\`, max \`${stB.max}\`) | ${w ? `**\`${w.pct >= 0 ? '+' : ''}${w.pct}%\`** \`[${w.ciLow}%, ${w.ciHi}%]\` (\`df=${w.df}\`)` : 'n/a'} |`;
+        const ev  = evaluateRelativeThreshold(arrA, arrB, 0.10);
+        if (!ev) {
+            return `| ${label} | \`${stA.mean} ± ${stA.sd}\` (med \`${stA.p50}\`, p99 \`${stA.p99}\`, max \`${stA.max}\`) | \`${stB.mean} ± ${stB.sd}\` (med \`${stB.p50}\`, p99 \`${stB.p99}\`, max \`${stB.max}\`) | n/a (\`n=${stA.n},${stB.n}\`) |`;
+        }
+        const fiellerStr = ev.ciLow !== null ? `\`[${ev.ciLow}%, ${ev.ciHi}%]\`` : `\`[unbounded]\``;
+        const gateStr    = showDecisionGate
+            ? ` · \`0.9μA−μB\` LB \`${ev.contrastCiLow >= 0 ? '+' : ''}${ev.contrastCiLow} ms\` (**${ev.passesThreshold ? 'PASS' : 'FAIL'}**, \`df=${ev.df}\`)`
+            : ` (\`df=${ev.df}\`)`;
+        return `| ${label} | \`${stA.mean} ± ${stA.sd}\` (med \`${stA.p50}\`, p99 \`${stA.p99}\`, max \`${stA.max}\`) | \`${stB.mean} ± ${stB.sd}\` (med \`${stB.p50}\`, p99 \`${stB.p99}\`, max \`${stB.max}\`) | **\`${ev.pct >= 0 ? '+' : ''}${ev.pct}%\`** ${fiellerStr}${gateStr} |`;
     };
 
     const sweepBlankA = runsA.reduce((s, r) => s + (r.sustainedSweep60?.blankFrames || 0), 0);
@@ -710,31 +914,42 @@ function formatSeriesMarkdown(series) {
     const flingBlankA = validFlingA.reduce((s, r) => s + (r.gridDragFling?.blankFrames || 0), 0);
     const flingBlankB = validFlingB.reduce((s, r) => s + (r.gridDragFling?.blankFrames || 0), 0);
     const hid         = series.results.reduce((s, r) => s + (r.visibility?.hiddenEvents || 0), 0);
+    const ltSupported = Boolean(runsA[0]?.longTasks?.supported || runsB[0]?.longTasks?.supported);
+    const ltLine      = ltSupported
+        ? `Arm A=\`[${runsA.map(r => `${r.longTasks?.count ?? 0}/${r.longTasks?.maxMs ?? 0}ms`).join(', ')}]\` · Arm B=\`[${runsB.map(r => `${r.longTasks?.count ?? 0}/${r.longTasks?.maxMs ?? 0}ms`).join(', ')}]\``
+        : `PerformanceObserver('longtask') unsupported in this browser engine (use per-run rAF >50ms spikes & maxRAF below)`;
 
     return [
-        `### DevIndex Same-Tab Counter-Balanced \`AB/BA\` Series (\`n=${runsA.length}\` A, \`n=${runsB.length}\` B · Preset \`${series.preset}\`)`,
+        `### DevIndex Counter-Balanced \`AB/BA\` Fresh-Navigation Series (Qualifying \`n=${runsA.length}/${allA.length}\` A, \`n=${runsB.length}/${allB.length}\` B · Preset \`${series.preset}\`)`,
         `- **Device:** \`${series.results[0]?.device?.viewport}\` @ \`${series.results[0]?.device?.dpr}x\` · Grid=\`${series.results[0]?.device?.gridViewport}\` · Canvases=\`${series.results[0]?.buffer?.mountedCanvases}\` · DOM=\`${series.results[0]?.buffer?.mountedDomNodes}\` · HiddenEvents=\`${hid}\``,
-        `- **Valid Fling Pages (${series.results[0]?.gridDragFling?.inputMode || 'auto'}):** Arm A=\`${validFlingA.length}/${runsA.length}\` · Arm B=\`${validFlingB.length}/${runsB.length}\` (blank frames — DragFling: A=\`${validFlingA.length ? flingBlankA : 'n/a'}\`, B=\`${validFlingB.length ? flingBlankB : 'n/a'}\`; 60-Step Sweep: A=\`${sweepBlankA}\`, B=\`${sweepBlankB}\`)`,
+        `- **Qualifying Sample Gate:** Arm A=\`${runsA.length}/${allA.length}\` · Arm B=\`${runsB.length}/${allB.length}\` · Flagged/Excluded=\`${flagged.length ? flagged.join(', ') : 'none'}\``,
+        `- **Valid 2D Fling Pages (${series.results[0]?.gridDragFling?.inputMode || 'auto'}):** Arm A=\`${validFlingA.length}/${runsA.length}\` · Arm B=\`${validFlingB.length}/${runsB.length}\` (blank frames — DragFling: A=\`${validFlingA.length ? flingBlankA : 'n/a'}\`, B=\`${validFlingB.length ? flingBlankB : 'n/a'}\`; 60-Step Sweep: A=\`${sweepBlankA}\`, B=\`${sweepBlankB}\`)`,
         ``,
-        `| Metric (Page-Level, Welch–Satterthwaite) | Arm A (\`VDom=true\`) | Arm B (\`VDom=false\`) | \`B vs A\` Welch \`95% CI\` |`,
+        `| Metric (Qualifying Pages) | Arm A (\`VDom=true\`) | Arm B (\`VDom=false\`) | \`B vs A\` Fieller \`95% CI\` & \`>=10%\` Contrast |`,
         `|---|---|---|---|`,
-        fmtMetric('50k Stream-In (ms)', runsA.map(r => r.initialStream.streamWallMs), runsB.map(r => r.initialStream.streamWallMs)),
-        fmtMetric('20-Hop Scroll Mean TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.meanUnrounded ?? r.scroll20Hops.tvs.mean), runsB.map(r => r.scroll20Hops.tvs.meanUnrounded ?? r.scroll20Hops.tvs.mean)),
-        fmtMetric('20-Hop Scroll p95 TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.p95), runsB.map(r => r.scroll20Hops.tvs.p95)),
-        fmtMetric('60-Step Sweep Frame p95 (ms)', runsA.map(r => r.sustainedSweep60.frameP95Ms), runsB.map(r => r.sustainedSweep60.frameP95Ms)),
-        fmtMetric('GridDragScroll Fling Frame p95 (ms)', validFlingA.map(r => r.gridDragFling.frameP95Ms), validFlingB.map(r => r.gridDragFling.frameP95Ms)),
-        fmtMetric('GridDragScroll Blank Time (ms)', validFlingA.map(r => r.gridDragFling.blankMs), validFlingB.map(r => r.gridDragFling.blankMs)),
-        fmtMetric('GridDragScroll Peak Travel Top (px)', validFlingA.map(r => r.gridDragFling.peakScrollDeltaTop), validFlingB.map(r => r.gridDragFling.peakScrollDeltaTop)),
-        fmtMetric('GridDragScroll NonEmpty Flights', validFlingA.map(r => r.gridDragFling.workers.nonEmptyDomFlights), validFlingB.map(r => r.gridDragFling.workers.nonEmptyDomFlights)),
-        fmtMetric('50k Warm Re-Sort Mean TVS (ms)', runsA.map(r => r.sort50k.tvs.meanUnrounded ?? r.sort50k.tvs.mean), runsB.map(r => r.sort50k.tvs.meanUnrounded ?? r.sort50k.tvs.mean)),
+        fmtMetric('50k Stream-In (ms)', runsA.map(r => r.initialStream.streamWallMs), runsB.map(r => r.initialStream.streamWallMs), false),
+        fmtMetric('20-Hop 2D Scroll Mean TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.meanUnrounded ?? r.scroll20Hops.tvs.mean), runsB.map(r => r.scroll20Hops.tvs.meanUnrounded ?? r.scroll20Hops.tvs.mean), true),
+        fmtMetric('20-Hop 2D Scroll p95 TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.p95), runsB.map(r => r.scroll20Hops.tvs.p95), true),
+        fmtMetric('20-Hop 2D Scroll p99 TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.p99), runsB.map(r => r.scroll20Hops.tvs.p99), false),
+        fmtMetric('60-Step Sweep Frame p95 (ms)', runsA.map(r => r.sustainedSweep60.frameP95Ms), runsB.map(r => r.sustainedSweep60.frameP95Ms), false),
+        fmtMetric('GridDragScroll Fling Frame p95 (ms)', validFlingA.map(r => r.gridDragFling.frameP95Ms), validFlingB.map(r => r.gridDragFling.frameP95Ms), true),
+        fmtMetric('GridDragScroll Fling Frame p99 (ms)', validFlingA.map(r => r.gridDragFling.frameP99Ms), validFlingB.map(r => r.gridDragFling.frameP99Ms), false),
+        fmtMetric('GridDragScroll Blank Time (ms)', validFlingA.map(r => r.gridDragFling.blankMs), validFlingB.map(r => r.gridDragFling.blankMs), false),
+        fmtMetric('50k Warm Re-Sort Mean TVS (ms)', runsA.map(r => r.sort50k.tvs.meanUnrounded ?? r.sort50k.tvs.mean), runsB.map(r => r.sort50k.tvs.meanUnrounded ?? r.sort50k.tvs.mean), true),
+        fmtMetric('50k Warm Rank-Filter Mean TVS (ms)', runsA.map(r => r.filter50k.tvs.meanUnrounded ?? r.filter50k.tvs.mean), runsB.map(r => r.filter50k.tvs.meanUnrounded ?? r.filter50k.tvs.mean), true),
         ``,
-        `- **Raw Stream A / B:** \`[${runsA.map(r => r.initialStream.streamWallMs).join(', ')}]\` / \`[${runsB.map(r => r.initialStream.streamWallMs).join(', ')}]\``,
-        `- **Raw Scroll Mean A / B:** \`[${runsA.map(r => r.scroll20Hops.tvs.mean).join(', ')}]\` / \`[${runsB.map(r => r.scroll20Hops.tvs.mean).join(', ')}]\``,
-        `- **Raw Scroll p95 A / B:** \`[${runsA.map(r => r.scroll20Hops.tvs.p95).join(', ')}]\` / \`[${runsB.map(r => r.scroll20Hops.tvs.p95).join(', ')}]\``,
-        `- **Raw Sort Means A / B:** \`[${runsA.map(r => r.sort50k.tvs.mean).join(', ')}]\` / \`[${runsB.map(r => r.sort50k.tvs.mean).join(', ')}]\``,
-        `- **Raw DragFling p95 (valid) A / B:** \`[${validFlingA.map(r => r.gridDragFling.frameP95Ms).join(', ')}]\` / \`[${validFlingB.map(r => r.gridDragFling.frameP95Ms).join(', ')}]\``,
-        `- **Raw DragFling TravelTop (all) A / B:** \`[${runsA.map(r => r.gridDragFling.peakScrollDeltaTop).join(', ')}]\` / \`[${runsB.map(r => r.gridDragFling.peakScrollDeltaTop).join(', ')}]\``,
-        `- **Raw DragFling NonEmptyFlights (valid) A / B:** \`[${validFlingA.map(r => r.gridDragFling.workers.nonEmptyDomFlights).join(', ')}]\` / \`[${validFlingB.map(r => r.gridDragFling.workers.nonEmptyDomFlights).join(', ')}]\``
+        `- **Raw Scroll p95 / p99 / maxRAF A:** \`[${runsA.map(r => `${r.scroll20Hops.tvs.p95}/${r.scroll20Hops.tvs.p99}/${r.scroll20Hops.maxRafMs}`).join(', ')}]\``,
+        `- **Raw Scroll p95 / p99 / maxRAF B:** \`[${runsB.map(r => `${r.scroll20Hops.tvs.p95}/${r.scroll20Hops.tvs.p99}/${r.scroll20Hops.maxRafMs}`).join(', ')}]\``,
+        `- **Raw Sort Mean / p99 / maxRAF A:** \`[${runsA.map(r => `${r.sort50k.tvs.mean}/${r.sort50k.tvs.p99}/${r.sort50k.maxRafMs}`).join(', ')}]\``,
+        `- **Raw Sort Mean / p99 / maxRAF B:** \`[${runsB.map(r => `${r.sort50k.tvs.mean}/${r.sort50k.tvs.p99}/${r.sort50k.maxRafMs}`).join(', ')}]\``,
+        `- **Raw Rank-Filter Mean / p99 / maxRAF A:** \`[${runsA.map(r => `${r.filter50k.tvs.mean}/${r.filter50k.tvs.p99}/${r.filter50k.maxRafMs}`).join(', ')}]\``,
+        `- **Raw Rank-Filter Mean / p99 / maxRAF B:** \`[${runsB.map(r => `${r.filter50k.tvs.mean}/${r.filter50k.tvs.p99}/${r.filter50k.maxRafMs}`).join(', ')}]\``,
+        `- **Raw DragFling p95 / p99 / maxRAF / longFrames50 (valid) A:** \`[${validFlingA.map(r => `${r.gridDragFling.frameP95Ms}/${r.gridDragFling.frameP99Ms}/${r.gridDragFling.maxRafMs}/${r.gridDragFling.longFrames50}`).join(', ')}]\``,
+        `- **Raw DragFling p95 / p99 / maxRAF / longFrames50 (valid) B:** \`[${validFlingB.map(r => `${r.gridDragFling.frameP95Ms}/${r.gridDragFling.frameP99Ms}/${r.gridDragFling.maxRafMs}/${r.gridDragFling.longFrames50}`).join(', ')}]\``,
+        `- **Raw DragFling Travel (Top×Left px) A / B:** \`[${runsA.map(r => `${r.gridDragFling.peakScrollDeltaTop}x${r.gridDragFling.peakScrollDeltaLeft}`).join(', ')}]\` / \`[${runsB.map(r => `${r.gridDragFling.peakScrollDeltaTop}x${r.gridDragFling.peakScrollDeltaLeft}`).join(', ')}]\``,
+        `- **LongTask (>50ms) Count/Max:** ${ltLine}`,
+        ``,
+        `*Inference note: Relative gain \`95% CI\` uses Fieller's ratio interval paired with the exact Welch linear threshold contrast \`Δ_10% = 0.9μA − μB > 0\` (\`Welch–Satterthwaite df\`; \`t_{0.975,df}\` from exact \`df=1..30\` table with \`1/df\` harmonic interpolation and 3-term Cornish–Fisher expansion for \`df > 30\`, max error \`< 1e-4\`).*`
     ].join('\n');
 }
 
@@ -754,12 +969,12 @@ async function initDeviceBenchmarkHud() {
         await sleep(50);
     }
 
-    const searchParams  = new URLSearchParams(globalThis.location.search);
-    const defaultPairs  = Math.max(2, Number(searchParams.get('pairs')) || 10);
-    const urlPreset     = ['1x1', '5x5', '25x15'].includes(searchParams.get('preset')) ? searchParams.get('preset') : '1x1';
-    const initialTopo   = getTopology();
-    const badgeClass    = initialTopo.armKey === 'C' ? 'is-arm-c' : (initialTopo.armKey === 'B' ? 'is-two-thread' : '');
-    const badgeLabel    = initialTopo.armKey === 'C'
+    const searchParams = new URLSearchParams(globalThis.location.search);
+    const defaultPairs = Math.max(2, Number(searchParams.get('pairs')) || 10);
+    const urlPreset    = ['1x1', '5x5', '25x15'].includes(searchParams.get('preset')) ? searchParams.get('preset') : '1x1';
+    const initialTopo  = getTopology();
+    const badgeClass   = initialTopo.armKey === 'C' ? 'is-arm-c' : (initialTopo.armKey === 'B' ? 'is-two-thread' : '');
+    const badgeLabel   = initialTopo.armKey === 'C'
         ? `Arm C (#22218 · vdom=${initialTopo.hasVdomWorker})`
         : `Arm ${initialTopo.armKey} (useVdomWorker=${initialTopo.useVdomWorker} · vdom=${initialTopo.hasVdomWorker})`;
 
@@ -778,10 +993,10 @@ async function initDeviceBenchmarkHud() {
         <div class="devindex-bench-body">
             <div class="devindex-bench-status" id="devindex-bench-status">Measuring initial 50,000-record stream...</div>
             <div class="devindex-bench-controls">
-                <select class="devindex-bench-select" id="devindex-bench-preset" aria-label="Buffer preset">
-                    <option value="1x1" ${urlPreset === '1x1' ? 'selected' : ''}>Buffer 1×1 (Primary)</option>
-                    <option value="5x5" ${urlPreset === '5x5' ? 'selected' : ''}>Buffer 5×5 (Medium)</option>
-                    <option value="25x15" ${urlPreset === '25x15' ? 'selected' : ''}>Buffer 25×15 (Stress)</option>
+                <select class="devindex-bench-select" id="devindex-bench-preset" aria-label="Buffer preset" title="Grid buffer range preset">
+                    <option value="1x1" ${urlPreset === '1x1' ? 'selected' : ''}>1×1 (Primary)</option>
+                    <option value="5x5" ${urlPreset === '5x5' ? 'selected' : ''}>5×5 (Medium)</option>
+                    <option value="25x15" ${urlPreset === '25x15' ? 'selected' : ''}>25×15 (Stress)</option>
                 </select>
                 <button class="devindex-bench-btn is-primary" id="devindex-bench-run" type="button" disabled>Run Page</button>
                 <button class="devindex-bench-btn is-accent" id="devindex-bench-series" type="button" disabled>${defaultPairs * 2}p AB/BA</button>
@@ -801,7 +1016,6 @@ async function initDeviceBenchmarkHud() {
     const collapseBtn = hud.querySelector('#devindex-bench-collapse');
     const armCLink    = hud.querySelector('#devindex-bench-link-c');
 
-    // Reveal Arm C link automatically when /arm-c/ bundle is mounted on the server
     fetch('/arm-c/dist/production/apps/devindex/index.html', { method: 'HEAD' })
         .then(r => { if (r.ok) armCLink.hidden = false; })
         .catch(() => {});
@@ -811,11 +1025,14 @@ async function initDeviceBenchmarkHud() {
         collapseBtn.textContent = collapsed ? '+' : '–';
     });
 
-    // Measure initial 50k stream-in automatically
-    const streamT0     = performance.now();
-    const streamFrames = [];
-    let lastStreamRaf  = streamT0;
-    let streamActive   = true;
+    // Measure initial 50k stream-in automatically with guaranteed cleanup
+    const streamT0         = performance.now();
+    const streamFrames     = [];
+    let lastStreamRaf      = streamT0;
+    let streamActive       = true;
+    let streamCompleted    = false;
+    let streamTimedOut     = false;
+    const streamLongTasks  = createLongTaskTracker();
     startWorkerProbe();
 
     function trackStreamRaf(now) {
@@ -826,27 +1043,43 @@ async function initDeviceBenchmarkHud() {
     }
     requestAnimationFrame(trackStreamRaf);
 
-    while (true) {
-        const stopBtn = document.querySelector('.devindex-stop-stream-button');
-        const rows    = Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount') || 0);
-        const hidden  = !stopBtn || stopBtn.offsetParent === null || stopBtn.classList.contains('neo-hidden') || stopBtn.style.display === 'none';
-        if (rows >= 45000 && hidden) break;
-        if (performance.now() - streamT0 > 90000) break;
-        await sleep(80);
+    let streamWorkers;
+    let streamLtSummary;
+    try {
+        while (true) {
+            const stopBtn = document.querySelector('.devindex-stop-stream-button');
+            const rows    = Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount') || 0);
+            const hidden  = !stopBtn || stopBtn.offsetParent === null || stopBtn.classList.contains('neo-hidden') || stopBtn.style.display === 'none';
+            if (rows >= 45000 && hidden) {
+                streamCompleted = true;
+                break;
+            }
+            if (performance.now() - streamT0 > 90000) {
+                streamTimedOut = true;
+                break;
+            }
+            await sleep(80);
+        }
+    } finally {
+        streamActive    = false;
+        streamWorkers   = stopWorkerProbe();
+        streamLtSummary = streamLongTasks.stop();
     }
 
-    streamActive = false;
     const streamWallMs  = +(performance.now() - streamT0).toFixed(2);
-    const streamWorkers = stopWorkerProbe();
     const streamFrameSt = stats(streamFrames);
     const streamRows    = Number(document.querySelector('[role="grid"]')?.getAttribute('aria-rowcount') || 0);
 
     const initialStreamSummary = {
+        completed         : streamCompleted && !streamTimedOut,
+        timedOut          : streamTimedOut,
         streamWallMs,
         rows              : streamRows,
         frameP95Ms        : streamFrameSt.p95,
+        frameP99Ms        : streamFrameSt.p99,
         maxRafMs          : streamFrameSt.max,
         longFrames50      : streamFrames.filter(d => d > 50).length,
+        longTasks         : streamLtSummary,
         flightsPerSec     : streamWorkers.flightsPerSec,
         nonEmptyDomFlights: streamWorkers.nonEmptyDomFlights,
         vnodeRelays       : streamWorkers.vnodeRelayMessages
@@ -858,25 +1091,32 @@ async function initDeviceBenchmarkHud() {
 
     let lastMarkdown = '';
     let lastResult   = null;
+    let pageRunCount = 0;
 
     async function runBenchmarkSuite(opts = {}) {
-        const [presetRows, presetCols] = (opts.preset || presetEl.value || '1x1').split('x').map(Number);
-        const bufferRows = opts.bufferRows ?? presetRows;
-        const bufferCols = opts.bufferCols ?? presetCols;
+        const chosenPreset             = opts.preset || presetEl.value || '1x1';
+        const [presetRows, presetCols] = chosenPreset.split('x').map(Number);
+        const bufferRows               = opts.bufferRows ?? presetRows;
+        const bufferCols               = opts.bufferCols ?? presetCols;
+        const resolvedPreset           = `${bufferRows}x${bufferCols}`;
 
-        runBtn.disabled    = true;
-        seriesBtn.disabled = true;
-        copyBtn.disabled   = true;
+        runBtn.disabled         = true;
+        seriesBtn.disabled      = true;
+        copyBtn.disabled        = true;
         hud.classList.add('is-collapsed');
         collapseBtn.textContent = '+';
 
+        const suiteLongTasks = createLongTaskTracker();
+        let activeTracker    = null;
+
         try {
             statusEl.textContent = `Applying Buffer ${bufferRows}×${bufferCols}...`;
-            await applyBufferPreset(bufferRows, bufferCols);
+            await applyBufferPresetAndPrimeSearchTab(bufferRows, bufferCols);
 
             const vScroller = document.querySelector('.neo-grid-view');
             const hScroller = document.querySelector('.neo-grid-horizontal-scrollbar');
             const gridBody  = document.querySelector('.neo-grid-body');
+            const gridRole  = document.querySelector('[role="grid"]');
             const rowHeight = 50;
             const viewRect  = vScroller.getBoundingClientRect();
 
@@ -889,7 +1129,7 @@ async function initDeviceBenchmarkHud() {
             const mountedCanvases = gridBody.querySelectorAll('canvas').length;
             const mountedDomNodes = gridBody.querySelectorAll('*').length;
 
-            // 1. n = 20 Discrete Render-Gated 2D Diagonal Scroll Hops
+            // 1. n = 20 Discrete Render-Gated 2D Diagonal Scroll Hops (verifying both vertical row & target horizontal column window)
             const maxLeft = Math.max(0, (hScroller?.scrollWidth || 0) - (hScroller?.clientWidth || 0));
             const hops20  = [
                 { rowId: 1000,  leftFrac: 0.15 },
@@ -917,80 +1157,95 @@ async function initDeviceBenchmarkHud() {
             const hopTvs       = [];
             const hopMaxRaf    = [];
             const allHopFrames = [];
+            let scroll20Workers;
 
             startWorkerProbe();
-            for (let i = 0; i < hops20.length; i++) {
-                const hop        = hops20[i];
-                const targetTop  = hop.rowId * rowHeight;
-                const targetLeft = Math.round(maxLeft * hop.leftFrac);
-                const probe      = await measureProbe(`hop-${i + 1}`, () => {
-                    vScroller.scrollTop = targetTop;
-                    if (hScroller) hScroller.scrollLeft = targetLeft;
-                }, () => {
-                    const row = document.querySelector(`.neo-grid-row[data-row-id="${hop.rowId}"]`);
-                    return Boolean(row && row.querySelector('.neo-grid-cell'));
-                });
-                hopTvs.push(probe.tvsMs);
-                hopMaxRaf.push(probe.maxRafDeltaMs);
-                allHopFrames.push(...probe.frameDeltas);
-                await sleep(30);
+            try {
+                for (let i = 0; i < hops20.length; i++) {
+                    const hop        = hops20[i];
+                    const targetTop  = hop.rowId * rowHeight;
+                    const targetLeft = Math.round(maxLeft * hop.leftFrac);
+                    const probe      = await measureProbe(`hop-${i + 1}`, () => {
+                        vScroller.scrollTop = targetTop;
+                        if (hScroller) hScroller.scrollLeft = targetLeft;
+                    }, () => is2dHopRendered({
+                        rowId: hop.rowId,
+                        targetLeft,
+                        maxLeft,
+                        vScroller,
+                        hScroller,
+                        gridBody
+                    }));
+                    hopTvs.push(probe.tvsMs);
+                    hopMaxRaf.push(probe.maxRafDeltaMs);
+                    allHopFrames.push(...probe.frameDeltas);
+                    await sleep(30);
+                }
+            } finally {
+                scroll20Workers = stopWorkerProbe();
             }
-            const scroll20Workers = stopWorkerProbe();
 
             // 2. Sustained 60-step Continuous 2D Scroll Sweep (with per-rAF blank-frame detector)
+            let sweepSummary;
+            let sweepWorkers;
             startWorkerProbe();
-            const sweepTracker = createFrameAndBlankTracker(vScroller, gridBody);
-
-            for (let s = 1; s <= 60; s++) {
-                const frac = s <= 30 ? (s / 30) : ((60 - s) / 30);
-                vScroller.scrollTop = Math.round(frac * 25000 * rowHeight);
-                if (hScroller) hScroller.scrollLeft = Math.round(frac * maxLeft);
-                await sleep(20);
+            activeTracker = createFrameAndBlankTracker(vScroller, gridBody);
+            try {
+                for (let s = 1; s <= 60; s++) {
+                    const frac = s <= 30 ? (s / 30) : ((60 - s) / 30);
+                    vScroller.scrollTop = Math.round(frac * 25000 * rowHeight);
+                    if (hScroller) hScroller.scrollLeft = Math.round(frac * maxLeft);
+                    await sleep(20);
+                }
+                await sleep(100);
+            } finally {
+                sweepSummary  = activeTracker.stop();
+                activeTracker = null;
+                sweepWorkers  = stopWorkerProbe();
             }
-            await sleep(100);
-            const sweepSummary = sweepTracker.stop();
-            const sweepWorkers = stopWorkerProbe();
 
-            // 3. Real GridDragScroll Diagonal Drag + Kinetic Fling (with per-rAF blank-frame detector)
+            // 3. Real GridDragScroll Diagonal Drag + Kinetic Fling (requiring 2D travel when maxLeft >= 40)
             const gridDragFling = opts.skipDragFling === true
-                ? { available: false, unavailableReason: 'skipped', inputMode: 'none', deliveredMoves: 0, fps: null, frameP50Ms: null, frameP95Ms: null, frameP99Ms: null, maxRafMs: null, longFrames50: null, blankFrames: null, blankMs: null, maxBlankStreakMs: null, minVisibleRows: 0, minVisibleCells: 0, peakScrollDeltaTop: 0, peakScrollDeltaLeft: 0, totalTravelTop: 0, totalTravelLeft: 0, workers: stopWorkerProbe() }
+                ? { available: false, unavailableReason: 'skipped', inputMode: 'none', expectsHorizontal: maxLeft >= 40, deliveredMoves: 0, fps: null, frameP50Ms: null, frameP95Ms: null, frameP99Ms: null, maxRafMs: null, longFrames50: null, blankFrames: null, blankMs: null, maxBlankStreakMs: null, minVisibleRows: 0, minVisibleCells: 0, peakScrollDeltaTop: 0, peakScrollDeltaLeft: 0, totalTravelTop: 0, totalTravelLeft: 0, workers: stopWorkerProbe() }
                 : await runGridDragScrollStrokes(vScroller, hScroller, gridBody);
 
             vScroller.scrollTop = 0;
             if (hScroller) hScroller.scrollLeft = 0;
             await sleep(200);
 
-            // 4. 50,000-Record Column Re-Sorts (1 untimed warm-up sort per column excluded from timing)
-            const getTopLogin = () => {
-                const cell = document.querySelector('.neo-grid-row[data-row-id="0"] .neo-grid-cell[data-field="login"]');
-                return cell ? cell.textContent.trim() : '';
-            };
-
+            // 4. 50,000-Record Column Re-Sorts (1 untimed warm-up sort per column excluded; multi-row + aria-sort witness)
             if (hScroller && window.innerWidth < 600) {
                 hScroller.scrollLeft = 220;
                 await sleep(150);
             }
 
-            const clickHeader = (txt) => {
+            const getHeaderBtn = (txt) => {
                 const btn = Array.from(document.querySelectorAll('.neo-grid-header-button')).find(b => b.textContent.trim() === txt);
                 if (!btn) throw new Error(`Header "${txt}" not found`);
-                btn.click();
+                return btn;
+            };
+
+            const runSortStep = async (stepName, headerText) => {
+                if (hScroller && window.innerWidth < 600) {
+                    hScroller.scrollLeft = 220;
+                    await sleep(60);
+                }
+                const headerBtn   = getHeaderBtn(headerText);
+                const prevSortDir = getHeaderSortDirection(headerBtn);
+                const prevRowsSig = getMountedRowsSignature(gridBody);
+                return measureProbe(stepName, () => {
+                    headerBtn.click();
+                }, () => {
+                    const curSortDir = getHeaderSortDirection(headerBtn);
+                    const curRowsSig = getMountedRowsSignature(gridBody);
+                    return curSortDir !== 'none' && curSortDir !== prevSortDir && Boolean(curRowsSig) && curRowsSig !== prevRowsSig;
+                });
             };
 
             const warmupTargets = ['Commits %', 'Total'];
             const warmupTvs     = [];
             for (let w = 0; w < warmupTargets.length; w++) {
-                if (hScroller && window.innerWidth < 600) {
-                    hScroller.scrollLeft = 220;
-                    await sleep(60);
-                }
-                const prevLogin = getTopLogin();
-                const warmProbe = await measureProbe(`warmup-sort-${w + 1}`, () => {
-                    clickHeader(warmupTargets[w]);
-                }, () => {
-                    const cur = getTopLogin();
-                    return Boolean(cur) && cur !== prevLogin;
-                });
+                const warmProbe = await runSortStep(`warmup-sort-${w + 1}`, warmupTargets[w]);
                 warmupTvs.push(warmProbe.tvsMs);
                 await sleep(60);
             }
@@ -998,36 +1253,75 @@ async function initDeviceBenchmarkHud() {
             const sortTvs     = [];
             const sortMaxRaf  = [];
             const sortTargets = ['Commits %', 'Total', 'Commits %', 'Total', 'Commits %', 'Total'];
+            let sortWorkers;
 
             startWorkerProbe();
-            for (let i = 0; i < sortTargets.length; i++) {
-                if (hScroller && window.innerWidth < 600) {
-                    hScroller.scrollLeft = 220;
+            try {
+                for (let i = 0; i < sortTargets.length; i++) {
+                    const probe = await runSortStep(`sort-${i + 1}`, sortTargets[i]);
+                    sortTvs.push(probe.tvsMs);
+                    sortMaxRaf.push(probe.maxRafDeltaMs);
                     await sleep(60);
                 }
-                const prevLogin = getTopLogin();
-                const probe     = await measureProbe(`sort-${i + 1}`, () => {
-                    clickHeader(sortTargets[i]);
+            } finally {
+                sortWorkers = stopWorkerProbe();
+            }
+            if (hScroller) hScroller.scrollLeft = 0;
+            await sleep(120);
+
+            // 5. 50,000-Record Structural Rank-Filter Toggles (1 untimed warm-up cycle excluded; 4 timed toggles)
+            const runFilterToggle = async (stepName, checkboxLabelText) => {
+                const inputEl     = findFilterCheckboxLabel(checkboxLabelText);
+                const prevCount   = Number(gridRole?.getAttribute('aria-rowcount') || 0);
+                const prevRowsSig = getMountedRowsSignature(gridBody);
+                return measureProbe(stepName, () => {
+                    inputEl.click();
                 }, () => {
-                    const cur = getTopLogin();
-                    return Boolean(cur) && cur !== prevLogin;
+                    const curCount = Number(gridRole?.getAttribute('aria-rowcount') || 0);
+                    const maskBusy = Boolean(document.querySelector('.neo-load-mask:not(.neo-hidden)'));
+                    const curSig   = getMountedRowsSignature(gridBody);
+                    return !maskBusy && curCount > 0 && curCount !== prevCount && Boolean(curSig) && curSig !== prevRowsSig;
                 });
-                sortTvs.push(probe.tvsMs);
-                sortMaxRaf.push(probe.maxRafDeltaMs);
+            };
+
+            const filterWarmupTvs = [];
+            for (let fw = 0; fw < 2; fw++) {
+                const wp = await runFilterToggle(`warmup-filter-${fw + 1}`, 'Hireable Only');
+                filterWarmupTvs.push(wp.tvsMs);
                 await sleep(60);
             }
-            const sortWorkers = stopWorkerProbe();
-            if (hScroller) hScroller.scrollLeft = 0;
 
-            const topo       = getTopology();
-            const hopStats   = { ...stats(hopTvs), meanUnrounded: hopTvs.reduce((s, x) => s + x, 0) / Math.max(1, hopTvs.length) };
-            const hopFrameSt = stats(allHopFrames);
-            const sortStats  = { ...stats(sortTvs), meanUnrounded: sortTvs.reduce((s, x) => s + x, 0) / Math.max(1, sortTvs.length) };
+            const filterTvs     = [];
+            const filterMaxRaf  = [];
+            const filterTargets = ['Hireable Only', 'Hireable Only', 'Hide Commit Ratio > 90%', 'Hide Commit Ratio > 90%'];
+            let filterWorkers;
+
+            startWorkerProbe();
+            try {
+                for (let f = 0; f < filterTargets.length; f++) {
+                    const fp = await runFilterToggle(`filter-${f + 1}`, filterTargets[f]);
+                    filterTvs.push(fp.tvsMs);
+                    filterMaxRaf.push(fp.maxRafDeltaMs);
+                    await sleep(60);
+                }
+            } finally {
+                filterWorkers = stopWorkerProbe();
+            }
+
+            const longTaskSummary = suiteLongTasks.stop();
+            const topo            = getTopology();
+            const hopStats        = stats(hopTvs);
+            const hopFrameSt      = stats(allHopFrames);
+            const sortStats       = stats(sortTvs);
+            const filterStats     = stats(filterTvs);
+            pageRunCount++;
 
             lastResult = {
-                timestamp : new Date().toISOString(),
-                topology  : topo,
-                visibility: {
+                timestamp  : new Date().toISOString(),
+                preset     : resolvedPreset,
+                runIndexInDocument: pageRunCount,
+                topology   : topo,
+                visibility : {
                     state       : document.visibilityState,
                     hiddenEvents: visibilityHiddenEvents
                 },
@@ -1039,12 +1333,15 @@ async function initDeviceBenchmarkHud() {
                     userAgent          : navigator.userAgent
                 },
                 buffer       : { bufferRows, bufferCols, mountedRows, mountedCells, mountedCanvases, mountedDomNodes },
+                longTasks    : longTaskSummary,
                 initialStream: initialStreamSummary,
                 scroll20Hops : {
-                    tvs       : hopStats,
-                    frameP95Ms: hopFrameSt.p95,
-                    maxRafMs  : +(Math.max(...hopMaxRaf)).toFixed(2),
-                    workers   : scroll20Workers
+                    tvs         : hopStats,
+                    frameP95Ms  : hopFrameSt.p95,
+                    frameP99Ms  : hopFrameSt.p99,
+                    maxRafMs    : +(Math.max(...hopMaxRaf)).toFixed(2),
+                    longFrames50: allHopFrames.filter(d => d > 50).length,
+                    workers     : scroll20Workers
                 },
                 sustainedSweep60: {
                     ...sweepSummary,
@@ -1056,21 +1353,33 @@ async function initDeviceBenchmarkHud() {
                     tvs     : sortStats,
                     maxRafMs: +(Math.max(...sortMaxRaf)).toFixed(2),
                     workers : sortWorkers
+                },
+                filter50k: {
+                    warmupTvs: filterWarmupTvs,
+                    tvs      : filterStats,
+                    maxRafMs : +(Math.max(...filterMaxRaf)).toFixed(2),
+                    workers  : filterWorkers
                 }
             };
 
+            const ltText = longTaskSummary.supported
+                ? `count \`${longTaskSummary.count}\`, max \`${longTaskSummary.maxMs} ms\``
+                : `unsupported in engine (see rAF \`>50ms\` counts)`;
+
             lastMarkdown = [
-                `### DevIndex Benchmark — \`Arm ${topo.armKey}\` (\`build=${topo.buildLabel}\`, \`useVdomWorker=${topo.useVdomWorker}\`, \`vdom=${topo.hasVdomWorker}\`)`,
-                `- **Device:** \`${lastResult.device.viewport}\` (grid \`${lastResult.device.gridViewport}\`) @ \`${lastResult.device.dpr}x\` · cores=\`${lastResult.device.hardwareConcurrency}\` · Buffer=\`${bufferRows}x${bufferCols}\` (\`${mountedRows}\` rows, \`${mountedCells}\` cells, \`${mountedCanvases}\` canvases, \`${mountedDomNodes}\` DOM nodes) · hiddenEvents=\`${visibilityHiddenEvents}\``,
-                `- **50k Stream-In:** \`${initialStreamSummary.streamWallMs} ms\` · frame p95 \`${initialStreamSummary.frameP95Ms} ms\` · maxRAF \`${initialStreamSummary.maxRafMs} ms\` · nonEmptyFlights \`${initialStreamSummary.nonEmptyDomFlights}\` · vnodeRelays \`${initialStreamSummary.vnodeRelays}\``,
-                `- **2D Scroll (n=20 hops):** mean \`${hopStats.mean} ± ${hopStats.sd} ms\` (95% CI \`±${hopStats.ci95Half}\`) · p50 \`${hopStats.p50} ms\` · **p95 \`${hopStats.p95} ms\`** · p99 \`${hopStats.p99} ms\` · max \`${hopStats.max} ms\` · nonEmptyFlights \`${scroll20Workers.nonEmptyDomFlights}\` · relays \`${scroll20Workers.vnodeRelays}\``,
+                `### DevIndex Benchmark — \`Arm ${topo.armKey}\` (\`build=${topo.buildLabel}\`, \`useVdomWorker=${topo.useVdomWorker}\`, \`vdom=${topo.hasVdomWorker}\`, \`preset=${resolvedPreset}\`)`,
+                `- **Device:** \`${lastResult.device.viewport}\` (grid \`${lastResult.device.gridViewport}\`) @ \`${lastResult.device.dpr}x\` · cores=\`${lastResult.device.hardwareConcurrency}\` · Buffer=\`${bufferRows}x${bufferCols}\` (\`${mountedRows}\` rows, \`${mountedCells}\` cells, \`${mountedCanvases}\` canvases, \`${mountedDomNodes}\` DOM nodes) · hiddenEvents=\`${visibilityHiddenEvents}\` · LongTasks: ${ltText}`,
+                `- **50k Stream-In (complete=${initialStreamSummary.completed}):** \`${initialStreamSummary.streamWallMs} ms\` · frame p95 \`${initialStreamSummary.frameP95Ms} ms\` · p99 \`${initialStreamSummary.frameP99Ms} ms\` · maxRAF \`${initialStreamSummary.maxRafMs} ms\` · spikes>50ms \`${initialStreamSummary.longFrames50}\` · nonEmptyFlights \`${initialStreamSummary.nonEmptyDomFlights}\` · vnodeRelays \`${initialStreamSummary.vnodeRelays}\``,
+                `- **2D Scroll (n=20 2D-verified hops):** mean \`${hopStats.mean} ± ${hopStats.sd} ms\` (95% CI \`±${hopStats.ci95Half}\`) · p50 \`${hopStats.p50} ms\` · **p95 \`${hopStats.p95} ms\`** · **p99 \`${hopStats.p99} ms\`** · max \`${hopStats.max} ms\` · maxRAF \`${lastResult.scroll20Hops.maxRafMs} ms\` · spikes>50ms \`${lastResult.scroll20Hops.longFrames50}\` · nonEmptyFlights \`${scroll20Workers.nonEmptyDomFlights}\` · relays \`${scroll20Workers.vnodeRelayMessages}\``,
                 `  - raw hops: \`[${hopStats.raw.join(', ')}]\``,
-                `- **Sustained 60-Step Sweep:** FPS \`${sweepSummary.fps}\` · frame p50 \`${sweepSummary.frameP50Ms} ms\` · **frame p95 \`${sweepSummary.frameP95Ms} ms\`** · maxRAF \`${sweepSummary.maxRafMs} ms\` · **blankFrames \`${sweepSummary.blankFrames}\` (\`${sweepSummary.blankMs} ms\`, maxStreak \`${sweepSummary.maxBlankStreakMs} ms\`)** · nonEmptyFlights \`${sweepWorkers.nonEmptyDomFlights}\``,
+                `- **Sustained 60-Step Sweep:** FPS \`${sweepSummary.fps}\` · frame p50 \`${sweepSummary.frameP50Ms} ms\` · **frame p95 \`${sweepSummary.frameP95Ms} ms\`** · **p99 \`${sweepSummary.frameP99Ms} ms\`** · maxRAF \`${sweepSummary.maxRafMs} ms\` · spikes>50ms \`${sweepSummary.longFrames50}\` · **blankFrames \`${sweepSummary.blankFrames}\` (\`${sweepSummary.blankMs} ms\`, maxStreak \`${sweepSummary.maxBlankStreakMs} ms\`)** · nonEmptyFlights \`${sweepWorkers.nonEmptyDomFlights}\``,
                 gridDragFling.available
-                    ? `- **GridDragScroll 2D Fling (${gridDragFling.inputMode}):** FPS \`${gridDragFling.fps}\` · **frame p95 \`${gridDragFling.frameP95Ms} ms\`** · maxRAF \`${gridDragFling.maxRafMs} ms\` · **blankFrames \`${gridDragFling.blankFrames}\` (\`${gridDragFling.blankMs} ms\`, maxStreak \`${gridDragFling.maxBlankStreakMs} ms\`)** · moved \`${gridDragFling.peakScrollDeltaTop}px × ${gridDragFling.peakScrollDeltaLeft}px\` (total \`${gridDragFling.totalTravelTop}px × ${gridDragFling.totalTravelLeft}px\`, moves \`${gridDragFling.deliveredMoves}\`) · nonEmptyFlights \`${gridDragFling.workers.nonEmptyDomFlights}\` · relays \`${gridDragFling.workers.vnodeRelayMessages}\``
+                    ? `- **GridDragScroll 2D Fling (${gridDragFling.inputMode}):** FPS \`${gridDragFling.fps}\` · **frame p95 \`${gridDragFling.frameP95Ms} ms\`** · **p99 \`${gridDragFling.frameP99Ms} ms\`** · maxRAF \`${gridDragFling.maxRafMs} ms\` · spikes>50ms \`${gridDragFling.longFrames50}\` · **blankFrames \`${gridDragFling.blankFrames}\` (\`${gridDragFling.blankMs} ms\`, maxStreak \`${gridDragFling.maxBlankStreakMs} ms\`)** · moved \`${gridDragFling.peakScrollDeltaTop}px × ${gridDragFling.peakScrollDeltaLeft}px\` (total \`${gridDragFling.totalTravelTop}px × ${gridDragFling.totalTravelLeft}px\`, moves \`${gridDragFling.deliveredMoves}\`) · nonEmptyFlights \`${gridDragFling.workers.nonEmptyDomFlights}\` · relays \`${gridDragFling.workers.vnodeRelayMessages}\``
                     : `- **GridDragScroll 2D Fling (${gridDragFling.inputMode}):** \`UNAVAILABLE (${gridDragFling.unavailableReason}: moved ${gridDragFling.peakScrollDeltaTop}px × ${gridDragFling.peakScrollDeltaLeft}px)\` — excluded from fling aggregates; run manual visual swipe for canvas/blanking`,
-                `- **50k Re-Sort (n=6 warm, 1/col warm-up excluded):** mean \`${sortStats.mean} ± ${sortStats.sd} ms\` (95% CI \`±${sortStats.ci95Half}\`) · p50 \`${sortStats.p50} ms\` · p95 \`${sortStats.p95} ms\` · max \`${sortStats.max} ms\` · maxRAF \`${lastResult.sort50k.maxRafMs} ms\``,
-                `  - raw sorts: \`[${sortStats.raw.join(', ')}]\` (excluded warm-up: \`[${warmupTvs.join(', ')}]\`)`
+                `- **50k Re-Sort (n=6 warm, 1/col warm-up excluded):** mean \`${sortStats.mean} ± ${sortStats.sd} ms\` (95% CI \`±${sortStats.ci95Half}\`) · p50 \`${sortStats.p50} ms\` · p95 \`${sortStats.p95} ms\` · p99 \`${sortStats.p99} ms\` · max \`${sortStats.max} ms\` · maxRAF \`${lastResult.sort50k.maxRafMs} ms\``,
+                `  - raw sorts: \`[${sortStats.raw.join(', ')}]\` (excluded warm-up: \`[${warmupTvs.join(', ')}]\`)`,
+                `- **50k Rank-Filter (n=4 warm toggles, 1 cycle warm-up excluded):** mean \`${filterStats.mean} ± ${filterStats.sd} ms\` (95% CI \`±${filterStats.ci95Half}\`) · p50 \`${filterStats.p50} ms\` · p95 \`${filterStats.p95} ms\` · p99 \`${filterStats.p99} ms\` · max \`${filterStats.max} ms\` · maxRAF \`${lastResult.filter50k.maxRafMs} ms\` · nonEmptyFlights \`${filterWorkers.nonEmptyDomFlights}\``,
+                `  - raw rank-filters: \`[${filterStats.raw.join(', ')}]\` (excluded warm-up: \`[${filterWarmupTvs.join(', ')}]\`)`
             ].join('\n');
 
             hud.classList.remove('is-collapsed');
@@ -1078,17 +1387,23 @@ async function initDeviceBenchmarkHud() {
             outputEl.hidden         = false;
             outputEl.textContent    = lastMarkdown;
             const flingStatus = gridDragFling.available
-                ? `DragFling(${gridDragFling.inputMode}) moved=${gridDragFling.peakScrollDeltaTop}px blank=${gridDragFling.blankFrames} (${gridDragFling.blankMs}ms)`
-                : `DragFling(${gridDragFling.inputMode})=UNAVAILABLE`;
-            statusEl.textContent    = `Done! Grid=${lastResult.device.gridViewport}, Scroll p95=${hopStats.p95}ms, ${flingStatus}, Sort=${sortStats.mean}ms.`;
-            copyBtn.disabled        = false;
+                ? `DragFling(${gridDragFling.inputMode}) moved=${gridDragFling.peakScrollDeltaTop}x${gridDragFling.peakScrollDeltaLeft}px blank=${gridDragFling.blankFrames}`
+                : `DragFling(${gridDragFling.inputMode})=UNAVAILABLE(${gridDragFling.unavailableReason})`;
+            statusEl.textContent = `Done! Grid=${lastResult.device.gridViewport}, Scroll p95=${hopStats.p95}ms, ${flingStatus}, Sort=${sortStats.mean}ms, Filter=${filterStats.mean}ms.`;
+            copyBtn.disabled     = false;
             return lastResult;
         } catch (err) {
+            activeTracker?.stop();
+            suiteLongTasks.stop();
+            stopWorkerProbe();
             hud.classList.remove('is-collapsed');
             collapseBtn.textContent = '–';
             statusEl.textContent    = `Error: ${err?.message || err}`;
             throw err;
         } finally {
+            activeTracker?.stop();
+            suiteLongTasks.stop();
+            stopWorkerProbe();
             runBtn.disabled    = false;
             seriesBtn.disabled = false;
         }
@@ -1115,8 +1430,44 @@ async function initDeviceBenchmarkHud() {
             return;
         }
 
-        statusEl.textContent = `Running AB/BA page ${idx + 1}/${series.plan.length} (Arm ${initialTopo.armKey})...`;
+        const expectedArm = series.plan[idx];
+        const urlSlotRaw  = searchParams.get('seriesSlot');
+        const urlSlot     = urlSlotRaw !== null ? Number(urlSlotRaw) : null;
+
+        // Require a fresh navigation bound to the exact expected series slot and arm
+        if (urlSlot !== idx || initialTopo.armKey !== expectedArm || pageRunCount > 0) {
+            const nextUrl = new URL(buildArmUrl(expectedArm, series.preset));
+            nextUrl.searchParams.set('autorunSeries', '1');
+            nextUrl.searchParams.set('seriesSlot', String(idx));
+            globalThis.location.assign(nextUrl.toString());
+            return;
+        }
+
+        statusEl.textContent = `Running fresh AB/BA page ${idx + 1}/${series.plan.length} (Arm ${expectedArm})...`;
         const pageRes = await runBenchmarkSuite({ preset: series.preset });
+
+        const invalidReasons = [];
+        const workerExpected = expectedArm !== 'B';
+        if (pageRes.topology.armKey !== expectedArm || pageRes.topology.useVdomWorker !== workerExpected || pageRes.topology.hasVdomWorker !== workerExpected) {
+            invalidReasons.push('topology-mismatch');
+        }
+        if (pageRes.preset !== series.preset) {
+            invalidReasons.push('preset-mismatch');
+        }
+        if (!pageRes.initialStream?.completed || (pageRes.initialStream?.rows || 0) < 45000) {
+            invalidReasons.push('incomplete-stream');
+        }
+        if ((pageRes.visibility?.hiddenEvents || 0) > 0 || pageRes.visibility?.state !== 'visible') {
+            invalidReasons.push('page-hidden');
+        }
+        if (pageRes.runIndexInDocument !== 1) {
+            invalidReasons.push('reused-document');
+        }
+
+        pageRes.planSlot       = idx;
+        pageRes.planArm        = expectedArm;
+        pageRes.sampleValid    = invalidReasons.length === 0;
+        pageRes.invalidReasons = invalidReasons;
         series.results.push(pageRes);
 
         if (series.results.length >= series.plan.length) {
@@ -1126,16 +1477,19 @@ async function initDeviceBenchmarkHud() {
             outputEl.hidden      = false;
             outputEl.textContent = lastMarkdown;
             copyBtn.disabled     = false;
-            statusEl.textContent = `Completed ${series.plan.length}-page AB/BA series! Tap Copy.`;
+            const qualCount = series.results.filter(r => r.sampleValid !== false).length;
+            statusEl.textContent = `Completed ${series.plan.length}-page AB/BA series (${qualCount}/${series.plan.length} qualifying)! Tap Copy.`;
             return;
         }
 
         sessionStorage.setItem(SERIES_STORAGE_KEY, JSON.stringify(series));
-        const nextArm = series.plan[series.results.length];
-        statusEl.textContent = `Saved ${series.results.length}/${series.plan.length}; navigating to Arm ${nextArm}...`;
-        await sleep(250);
+        const nextIdx = series.results.length;
+        const nextArm = series.plan[nextIdx];
+        statusEl.textContent = `Saved ${nextIdx}/${series.plan.length}; fresh navigation to Arm ${nextArm}...`;
+        await sleep(220);
         const nextUrl = new URL(buildArmUrl(nextArm, series.preset));
         nextUrl.searchParams.set('autorunSeries', '1');
+        nextUrl.searchParams.set('seriesSlot', String(nextIdx));
         globalThis.location.assign(nextUrl.toString());
     }
 
@@ -1144,22 +1498,26 @@ async function initDeviceBenchmarkHud() {
         runBenchmarkSuite().catch(console.error);
     });
 
-    seriesBtn.addEventListener('click', async () => {
+    seriesBtn.addEventListener('click', () => {
         const pairs  = defaultPairs;
         const preset = presetEl.value || '1x1';
         const plan   = [];
         for (let p = 0; p < pairs; p++) {
             plan.push(...(p % 2 === 0 ? ['A', 'B'] : ['B', 'A']));
         }
-        const series = { active: true, preset, plan, results: [] };
+        const series = {
+            active  : true,
+            seriesId: Date.now().toString(36),
+            preset,
+            plan,
+            results : []
+        };
         sessionStorage.setItem(SERIES_STORAGE_KEY, JSON.stringify(series));
-        if (initialTopo.armKey !== plan[0]) {
-            const nextUrl = new URL(buildArmUrl(plan[0], preset));
-            nextUrl.searchParams.set('autorunSeries', '1');
-            globalThis.location.assign(nextUrl.toString());
-            return;
-        }
-        await continueSeriesIfActive();
+        // Always navigate fresh for sample 1 so prior Run Page state in the current document is never reused
+        const nextUrl = new URL(buildArmUrl(plan[0], preset));
+        nextUrl.searchParams.set('autorunSeries', '1');
+        nextUrl.searchParams.set('seriesSlot', '0');
+        globalThis.location.assign(nextUrl.toString());
     });
 
     copyBtn.addEventListener('click', async () => {
@@ -1171,6 +1529,11 @@ async function initDeviceBenchmarkHud() {
 
     globalThis.__devindexBenchmark = {
         getTopology,
+        evaluateRelativeThreshold,
+        is2dHopRendered,
+        getMountedRowsSignature,
+        runGridDragScrollStrokes,
+        formatSeriesMarkdown,
         getInitialStreamSummary: () => initialStreamSummary,
         getLastResult          : () => lastResult,
         getLastMarkdown        : () => lastMarkdown,

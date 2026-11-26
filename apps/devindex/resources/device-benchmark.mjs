@@ -6,16 +6,42 @@
 
 const SERIES_STORAGE_KEY = '__devindex_bench_series_v2';
 
+const T_CRIT_95_TABLE = [
+    null,
+    12.7062, 4.3027, 3.1824, 2.7764, 2.5706, 2.4469, 2.3646, 2.3060, 2.2622, 2.2281,
+    2.2010,  2.1788, 2.1604, 2.1448, 2.1314, 2.1199, 2.1098, 2.1009, 2.0930, 2.0860,
+    2.0796,  2.0739, 2.0687, 2.0639, 2.0595, 2.0555, 2.0518, 2.0484, 2.0452, 2.0423
+];
+
+/**
+ * Two-sided 95% Student-t critical value (`t_{0.975, df}`) supporting fractional Welch-Satterthwaite `df`.
+ */
+const tCrit95 = (df) => {
+    if (!Number.isFinite(df) || df <= 1) return T_CRIT_95_TABLE[1];
+    if (df <= 30) {
+        const lo = Math.floor(df);
+        const hi = Math.ceil(df);
+        if (lo === hi) return T_CRIT_95_TABLE[lo];
+        const w = (1 / df - 1 / hi) / (1 / lo - 1 / hi);
+        return T_CRIT_95_TABLE[hi] + w * (T_CRIT_95_TABLE[lo] - T_CRIT_95_TABLE[hi]);
+    }
+    const z = 1.959963984540054;
+    return z +
+        (z ** 3 + z) / (4 * df) +
+        (5 * z ** 5 + 16 * z ** 3 + 3 * z) / (96 * df ** 2) +
+        (3 * z ** 7 + 19 * z ** 5 + 17 * z ** 3 - 15 * z) / (384 * df ** 3);
+};
+
 const stats = (arr) => {
-    if (!arr?.length) {
+    const clean = (arr || []).filter(x => typeof x === 'number' && Number.isFinite(x));
+    if (!clean.length) {
         return { n: 0, mean: 0, sd: 0, ci95Half: 0, p50: 0, p95: 0, p99: 0, max: 0, min: 0, raw: [] };
     }
-    const sorted = [...arr].sort((a, b) => a - b);
+    const sorted = [...clean].sort((a, b) => a - b);
     const n      = sorted.length;
-    const mean   = arr.reduce((s, x) => s + x, 0) / n;
-    const sd     = n > 1 ? Math.sqrt(arr.reduce((s, x) => s + (x - mean) ** 2, 0) / (n - 1)) : 0;
-    const tCrit  = n >= 30 ? 1.96 : n >= 20 ? 2.093 : n >= 10 ? 2.262 : 2.776;
-    const ci95   = n > 1 ? tCrit * (sd / Math.sqrt(n)) : 0;
+    const mean   = clean.reduce((s, x) => s + x, 0) / n;
+    const sd     = n > 1 ? Math.sqrt(clean.reduce((s, x) => s + (x - mean) ** 2, 0) / (n - 1)) : 0;
+    const ci95   = n > 1 ? tCrit95(n - 1) * (sd / Math.sqrt(n)) : 0;
     const pct    = (p) => sorted[Math.min(n - 1, Math.max(0, Math.ceil((p / 100) * n) - 1))];
     const p50    = n % 2 === 1 ? sorted[(n - 1) / 2] : (sorted[n / 2 - 1] + sorted[n / 2]) / 2;
 
@@ -29,25 +55,42 @@ const stats = (arr) => {
         p99     : +pct(99).toFixed(2),
         max     : +sorted[n - 1].toFixed(2),
         min     : +sorted[0].toFixed(2),
-        raw     : arr.map(x => +Number(x).toFixed(2))
+        raw     : clean.map(x => +Number(x).toFixed(2))
     };
 };
 
+/**
+ * Unrounded two-sample Welch t-interval for `(mean(base) - mean(arm)) / mean(base) * 100%`
+ * using exact Welch-Satterthwaite degrees of freedom.
+ */
 const welchGainPct = (baseArr, armArr) => {
-    if (!baseArr?.length || !armArr?.length) return null;
-    const a    = stats(baseArr);
-    const b    = stats(armArr);
-    if (!a.mean) return null;
-    const diff = a.mean - b.mean;
-    const se   = Math.sqrt((a.sd ** 2) / Math.max(1, a.n) + (b.sd ** 2) / Math.max(1, b.n));
-    const df   = Math.max(2, Math.min(a.n, b.n) - 1);
-    const t    = df >= 20 ? 2.086 : df >= 9 ? 2.262 : 2.571;
-    const pct  = (diff / a.mean) * 100;
-    const half = ((t * se) / a.mean) * 100;
+    const a = (baseArr || []).filter(x => typeof x === 'number' && Number.isFinite(x));
+    const b = (armArr  || []).filter(x => typeof x === 'number' && Number.isFinite(x));
+    if (a.length < 2 || b.length < 2) return null;
+
+    const nA    = a.length;
+    const nB    = b.length;
+    const meanA = a.reduce((s, x) => s + x, 0) / nA;
+    const meanB = b.reduce((s, x) => s + x, 0) / nB;
+    if (!meanA) return null;
+
+    const varA  = a.reduce((s, x) => s + (x - meanA) ** 2, 0) / (nA - 1);
+    const varB  = b.reduce((s, x) => s + (x - meanB) ** 2, 0) / (nB - 1);
+    const vA    = varA / nA;
+    const vB    = varB / nB;
+    const se    = Math.sqrt(vA + vB);
+    const denom = (vA ** 2) / (nA - 1) + (vB ** 2) / (nB - 1);
+    const df    = denom > 0 ? ((vA + vB) ** 2) / denom : (nA + nB - 2);
+    const t     = tCrit95(df);
+    const diff  = meanA - meanB;
+    const pct   = (diff / meanA) * 100;
+    const half  = ((t * se) / meanA) * 100;
+
     return {
         pct  : +pct.toFixed(2),
         ciLow: +(pct - half).toFixed(2),
-        ciHi : +(pct + half).toFixed(2)
+        ciHi : +(pct + half).toFixed(2),
+        df   : +df.toFixed(2)
     };
 };
 
@@ -332,14 +375,66 @@ function getTopology() {
     return { armKey, isArmC, buildLabel, useVdomWorker, hasVdomWorker };
 }
 
+function dispatchTouchGestureEvent(targetEl, type, cx, cy, isEnd = false) {
+    let touchObj = null;
+    if (typeof Touch === 'function') {
+        try {
+            touchObj = new Touch({
+                identifier: 1,
+                target    : targetEl,
+                clientX   : cx,
+                clientY   : cy,
+                pageX     : cx,
+                pageY     : cy,
+                screenX   : cx,
+                screenY   : cy,
+                radiusX   : 8,
+                radiusY   : 8,
+                force     : isEnd ? 0 : 1
+            });
+        } catch {
+            touchObj = null;
+        }
+    }
+
+    if (touchObj && typeof TouchEvent === 'function') {
+        try {
+            const activeList = isEnd ? [] : [touchObj];
+            const ev = new TouchEvent(type, {
+                bubbles       : true,
+                cancelable    : true,
+                composed      : true,
+                touches       : activeList,
+                targetTouches : activeList,
+                changedTouches: [touchObj]
+            });
+            return targetEl.dispatchEvent(ev);
+        } catch {
+            // Fall through to synthetic Event wrapper below
+        }
+    }
+
+    const fallbackTouch = { clientX: cx, clientY: cy, pageX: cx, pageY: cy, screenX: cx, screenY: cy, identifier: 1, target: targetEl };
+    const ev = new Event(type, { bubbles: true, cancelable: true, composed: true });
+    Object.defineProperties(ev, {
+        touches       : { value: isEnd ? [] : [fallbackTouch] },
+        targetTouches : { value: isEnd ? [] : [fallbackTouch] },
+        changedTouches: { value: [fallbackTouch] }
+    });
+    return targetEl.dispatchEvent(ev);
+}
+
 /**
- * @summary Drives real `Neo.main.addon.GridDragScroll` (`mousedown` -> `115ms` hold -> diagonal `mousemove` strokes -> `mouseup`
- * kinetic `autoScroll` decay) while recording per-`rAF` viewport blanking and worker delta flights.
+ * @summary Drives real `Neo.main.addon.GridDragScroll` along the active input path (`touchstart`/`touchmove`/`touchend`
+ * when `Neo.config.hasTouchEvents === true`, else `mousedown`/`mousemove`/`mouseup`) while recording per-`rAF` viewport
+ * blanking, worker delta flights, and achieved scroll travel (marking zero-travel runs `available: false`).
  */
 async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
-    const rect   = vScroller.getBoundingClientRect();
-    const startX = Math.round(rect.left + Math.min(rect.width * 0.72, rect.width - 24));
-    const startY = Math.round(rect.top + Math.min(rect.height * 0.72, rect.height - 24));
+    const useTouch  = Boolean(globalThis.Neo?.config?.hasTouchEvents);
+    const inputMode = useTouch ? 'touch' : 'mouse';
+    const rect      = vScroller.getBoundingClientRect();
+    const startX    = Math.round(rect.left + Math.min(rect.width * 0.72, rect.width - 24));
+    const startY    = Math.round(rect.top + Math.min(rect.height * 0.72, rect.height - 24));
 
     const maxLeft = Math.max(0, (hScroller?.scrollWidth || 0) - (hScroller?.clientWidth || 0));
     const dxStep  = -Math.max(18, Math.min(48, Math.round(maxLeft / 28) || 28));
@@ -353,30 +448,22 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
     const beforeLeft = hScroller ? hScroller.scrollLeft : 0;
 
     startWorkerProbe();
-    const tracker = createFrameAndBlankTracker(vScroller, gridBody);
+    const tracker       = createFrameAndBlankTracker(vScroller, gridBody);
+    let deliveredMoves  = 0;
+    let totalTravelTop  = 0;
+    let totalTravelLeft = 0;
 
     const runSingleStroke = async (dirSign) => {
         let cx = dirSign > 0 ? startX : Math.round(rect.left + Math.max(24, rect.width * 0.28));
         let cy = dirSign > 0 ? startY : Math.round(rect.top + Math.max(24, rect.height * 0.28));
-        const targetEl = gridBody.querySelector('.neo-grid-row') || gridBody;
+        const targetEl  = gridBody.querySelector('.neo-grid-row') || gridBody;
+        const strokeTop = vScroller.scrollTop;
+        const strokeLft = hScroller ? hScroller.scrollLeft : 0;
 
-        targetEl.dispatchEvent(new MouseEvent('mousedown', {
-            bubbles   : true,
-            cancelable: true,
-            composed  : true,
-            button    : 0,
-            buttons   : 1,
-            clientX   : cx,
-            clientY   : cy
-        }));
-
-        // Exceed GridDragScroll's 100ms delay gate before moving
-        await sleep(115);
-
-        for (let step = 0; step < 12; step++) {
-            cx += dirSign * dxStep;
-            cy += dirSign * dyStep;
-            document.dispatchEvent(new MouseEvent('mousemove', {
+        if (useTouch) {
+            dispatchTouchGestureEvent(targetEl, 'touchstart', cx, cy, false);
+        } else {
+            targetEl.dispatchEvent(new MouseEvent('mousedown', {
                 bubbles   : true,
                 cancelable: true,
                 composed  : true,
@@ -385,18 +472,44 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
                 clientX   : cx,
                 clientY   : cy
             }));
+        }
+
+        // Exceed GridDragScroll's 100ms delay gate before moving
+        await sleep(115);
+
+        for (let step = 0; step < 12; step++) {
+            cx += dirSign * dxStep;
+            cy += dirSign * dyStep;
+            if (useTouch) {
+                dispatchTouchGestureEvent(targetEl, 'touchmove', cx, cy, false);
+            } else {
+                document.dispatchEvent(new MouseEvent('mousemove', {
+                    bubbles   : true,
+                    cancelable: true,
+                    composed  : true,
+                    button    : 0,
+                    buttons   : 1,
+                    clientX   : cx,
+                    clientY   : cy
+                }));
+            }
+            deliveredMoves++;
             await sleep(16);
         }
 
-        document.dispatchEvent(new MouseEvent('mouseup', {
-            bubbles   : true,
-            cancelable: true,
-            composed  : true,
-            button    : 0,
-            buttons   : 0,
-            clientX   : cx,
-            clientY   : cy
-        }));
+        if (useTouch) {
+            dispatchTouchGestureEvent(targetEl, 'touchend', cx, cy, true);
+        } else {
+            document.dispatchEvent(new MouseEvent('mouseup', {
+                bubbles   : true,
+                cancelable: true,
+                composed  : true,
+                button    : 0,
+                buttons   : 0,
+                clientX   : cx,
+                clientY   : cy
+            }));
+        }
 
         // Wait for kinetic autoScroll decay to finish
         const tWait0    = performance.now();
@@ -406,8 +519,8 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
 
         while (performance.now() - tWait0 < 3500) {
             await sleep(32);
-            const curTop   = vScroller.scrollTop;
-            const curLeft  = hScroller ? hScroller.scrollLeft : 0;
+            const curTop    = vScroller.scrollTop;
+            const curLeft   = hScroller ? hScroller.scrollLeft : 0;
             const addonBusy = Boolean(globalThis.Neo?.main?.addon?.GridDragScroll?.activeDrag);
             if (!addonBusy && Math.abs(curTop - prevTop) < 0.5 && Math.abs(curLeft - prevLeft) < 0.5) {
                 stableCount++;
@@ -418,6 +531,9 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
             prevTop  = curTop;
             prevLeft = curLeft;
         }
+
+        totalTravelTop  += Math.abs(vScroller.scrollTop - strokeTop);
+        totalTravelLeft += Math.abs((hScroller ? hScroller.scrollLeft : 0) - strokeLft);
     };
 
     // Out-and-back diagonal drag+fling strokes
@@ -426,13 +542,48 @@ async function runGridDragScrollStrokes(vScroller, hScroller, gridBody) {
     const peakLeft = hScroller ? hScroller.scrollLeft : 0;
     await runSingleStroke(-1);
 
-    const frameSummary = tracker.stop();
-    const workers      = stopWorkerProbe();
+    const frameSummary        = tracker.stop();
+    const workers             = stopWorkerProbe();
+    const peakScrollDeltaTop  = Math.round(Math.abs(peakTop - beforeTop));
+    const peakScrollDeltaLeft = Math.round(Math.abs(peakLeft - beforeLeft));
+    const available           = peakScrollDeltaTop >= 50 || peakScrollDeltaLeft >= 20;
+
+    if (!available) {
+        return {
+            available          : false,
+            unavailableReason  : 'zero-travel',
+            inputMode,
+            deliveredMoves,
+            frames             : frameSummary.frames,
+            fps                : null,
+            frameP50Ms         : null,
+            frameP95Ms         : null,
+            frameP99Ms         : null,
+            maxRafMs           : null,
+            longFrames50       : null,
+            blankFrames        : null,
+            blankMs            : null,
+            maxBlankStreakMs   : null,
+            minVisibleRows     : frameSummary.minVisibleRows,
+            minVisibleCells    : frameSummary.minVisibleCells,
+            peakScrollDeltaTop,
+            peakScrollDeltaLeft,
+            totalTravelTop     : Math.round(totalTravelTop),
+            totalTravelLeft    : Math.round(totalTravelLeft),
+            workers
+        };
+    }
 
     return {
+        available       : true,
+        unavailableReason: null,
+        inputMode,
+        deliveredMoves,
         ...frameSummary,
-        peakScrollDeltaTop : Math.round(Math.abs(peakTop - beforeTop)),
-        peakScrollDeltaLeft: Math.round(Math.abs(peakLeft - beforeLeft)),
+        peakScrollDeltaTop,
+        peakScrollDeltaLeft,
+        totalTravelTop  : Math.round(totalTravelTop),
+        totalTravelLeft : Math.round(totalTravelLeft),
         workers
     };
 }
@@ -539,40 +690,51 @@ function buildArmUrl(targetArm, preset) {
 }
 
 function formatSeriesMarkdown(series) {
-    const runsA = series.results.filter(r => r.topology.armKey === 'A');
-    const runsB = series.results.filter(r => r.topology.armKey === 'B');
-    const fmtMetric = (label, getter) => {
-        const arrA = runsA.map(getter);
-        const arrB = runsB.map(getter);
-        const stA  = stats(arrA);
-        const stB  = stats(arrB);
-        const w    = welchGainPct(arrA, arrB);
-        return `| ${label} | \`${stA.mean} ± ${stA.sd}\` (med \`${stA.p50}\`, max \`${stA.max}\`) | \`${stB.mean} ± ${stB.sd}\` (med \`${stB.p50}\`, max \`${stB.max}\`) | ${w ? `**\`${w.pct >= 0 ? '+' : ''}${w.pct}%\`** \`[${w.ciLow}%, ${w.ciHi}%]\`` : 'n/a'} |`;
+    const runsA       = series.results.filter(r => r.topology.armKey === 'A');
+    const runsB       = series.results.filter(r => r.topology.armKey === 'B');
+    const validFlingA = runsA.filter(r => r.gridDragFling?.available);
+    const validFlingB = runsB.filter(r => r.gridDragFling?.available);
+
+    const fmtMetric = (label, arrA, arrB) => {
+        if (!arrA.length || !arrB.length) {
+            return `| ${label} | \`unavailable (${arrA.length}/${runsA.length})\` | \`unavailable (${arrB.length}/${runsB.length})\` | n/a |`;
+        }
+        const stA = stats(arrA);
+        const stB = stats(arrB);
+        const w   = welchGainPct(arrA, arrB);
+        return `| ${label} | \`${stA.mean} ± ${stA.sd}\` (med \`${stA.p50}\`, max \`${stA.max}\`) | \`${stB.mean} ± ${stB.sd}\` (med \`${stB.p50}\`, max \`${stB.max}\`) | ${w ? `**\`${w.pct >= 0 ? '+' : ''}${w.pct}%\`** \`[${w.ciLow}%, ${w.ciHi}%]\` (\`df=${w.df}\`)` : 'n/a'} |`;
     };
-    const blankA = runsA.reduce((s, r) => s + (r.gridDragFling?.blankFrames || 0) + (r.sustainedSweep60?.blankFrames || 0), 0);
-    const blankB = runsB.reduce((s, r) => s + (r.gridDragFling?.blankFrames || 0) + (r.sustainedSweep60?.blankFrames || 0), 0);
-    const hid    = series.results.reduce((s, r) => s + (r.visibility?.hiddenEvents || 0), 0);
+
+    const sweepBlankA = runsA.reduce((s, r) => s + (r.sustainedSweep60?.blankFrames || 0), 0);
+    const sweepBlankB = runsB.reduce((s, r) => s + (r.sustainedSweep60?.blankFrames || 0), 0);
+    const flingBlankA = validFlingA.reduce((s, r) => s + (r.gridDragFling?.blankFrames || 0), 0);
+    const flingBlankB = validFlingB.reduce((s, r) => s + (r.gridDragFling?.blankFrames || 0), 0);
+    const hid         = series.results.reduce((s, r) => s + (r.visibility?.hiddenEvents || 0), 0);
 
     return [
         `### DevIndex Same-Tab Counter-Balanced \`AB/BA\` Series (\`n=${runsA.length}\` A, \`n=${runsB.length}\` B · Preset \`${series.preset}\`)`,
         `- **Device:** \`${series.results[0]?.device?.viewport}\` @ \`${series.results[0]?.device?.dpr}x\` · Grid=\`${series.results[0]?.device?.gridViewport}\` · Canvases=\`${series.results[0]?.buffer?.mountedCanvases}\` · DOM=\`${series.results[0]?.buffer?.mountedDomNodes}\` · HiddenEvents=\`${hid}\``,
-        `- **Total Blank Viewport Frames (Sweep + DragFling):** Arm A=\`${blankA}\` · Arm B=\`${blankB}\``,
+        `- **Valid Fling Pages (${series.results[0]?.gridDragFling?.inputMode || 'auto'}):** Arm A=\`${validFlingA.length}/${runsA.length}\` · Arm B=\`${validFlingB.length}/${runsB.length}\` (blank frames — DragFling: A=\`${validFlingA.length ? flingBlankA : 'n/a'}\`, B=\`${validFlingB.length ? flingBlankB : 'n/a'}\`; 60-Step Sweep: A=\`${sweepBlankA}\`, B=\`${sweepBlankB}\`)`,
         ``,
-        `| Metric (Page-Level) | Arm A (\`VDom=true\`) | Arm B (\`VDom=false\`) | \`B vs A\` Welch \`95% CI\` |`,
+        `| Metric (Page-Level, Welch–Satterthwaite) | Arm A (\`VDom=true\`) | Arm B (\`VDom=false\`) | \`B vs A\` Welch \`95% CI\` |`,
         `|---|---|---|---|`,
-        fmtMetric('50k Stream-In (ms)', r => r.initialStream.streamWallMs),
-        fmtMetric('20-Hop Scroll Mean TVS (ms)', r => r.scroll20Hops.tvs.mean),
-        fmtMetric('20-Hop Scroll p95 TVS (ms)', r => r.scroll20Hops.tvs.p95),
-        fmtMetric('60-Step Sweep Frame p95 (ms)', r => r.sustainedSweep60.frameP95Ms),
-        fmtMetric('GridDragScroll Fling Frame p95 (ms)', r => r.gridDragFling.frameP95Ms),
-        fmtMetric('GridDragScroll Blank Time (ms)', r => r.gridDragFling.blankMs),
-        fmtMetric('50k Warm Re-Sort Mean TVS (ms)', r => r.sort50k.tvs.mean),
+        fmtMetric('50k Stream-In (ms)', runsA.map(r => r.initialStream.streamWallMs), runsB.map(r => r.initialStream.streamWallMs)),
+        fmtMetric('20-Hop Scroll Mean TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.meanUnrounded ?? r.scroll20Hops.tvs.mean), runsB.map(r => r.scroll20Hops.tvs.meanUnrounded ?? r.scroll20Hops.tvs.mean)),
+        fmtMetric('20-Hop Scroll p95 TVS (ms)', runsA.map(r => r.scroll20Hops.tvs.p95), runsB.map(r => r.scroll20Hops.tvs.p95)),
+        fmtMetric('60-Step Sweep Frame p95 (ms)', runsA.map(r => r.sustainedSweep60.frameP95Ms), runsB.map(r => r.sustainedSweep60.frameP95Ms)),
+        fmtMetric('GridDragScroll Fling Frame p95 (ms)', validFlingA.map(r => r.gridDragFling.frameP95Ms), validFlingB.map(r => r.gridDragFling.frameP95Ms)),
+        fmtMetric('GridDragScroll Blank Time (ms)', validFlingA.map(r => r.gridDragFling.blankMs), validFlingB.map(r => r.gridDragFling.blankMs)),
+        fmtMetric('GridDragScroll Peak Travel Top (px)', validFlingA.map(r => r.gridDragFling.peakScrollDeltaTop), validFlingB.map(r => r.gridDragFling.peakScrollDeltaTop)),
+        fmtMetric('GridDragScroll NonEmpty Flights', validFlingA.map(r => r.gridDragFling.workers.nonEmptyDomFlights), validFlingB.map(r => r.gridDragFling.workers.nonEmptyDomFlights)),
+        fmtMetric('50k Warm Re-Sort Mean TVS (ms)', runsA.map(r => r.sort50k.tvs.meanUnrounded ?? r.sort50k.tvs.mean), runsB.map(r => r.sort50k.tvs.meanUnrounded ?? r.sort50k.tvs.mean)),
         ``,
-        `- **Raw Sort Means A:** \`[${runsA.map(r => r.sort50k.tvs.mean).join(', ')}]\``,
-        `- **Raw Sort Means B:** \`[${runsB.map(r => r.sort50k.tvs.mean).join(', ')}]\``,
-        `- **Raw Scroll p95 A:** \`[${runsA.map(r => r.scroll20Hops.tvs.p95).join(', ')}]\``,
-        `- **Raw Scroll p95 B:** \`[${runsB.map(r => r.scroll20Hops.tvs.p95).join(', ')}]\``,
-        `- **Raw DragFling BlankMs A / B:** \`[${runsA.map(r => r.gridDragFling.blankMs).join(', ')}]\` / \`[${runsB.map(r => r.gridDragFling.blankMs).join(', ')}]\``
+        `- **Raw Stream A / B:** \`[${runsA.map(r => r.initialStream.streamWallMs).join(', ')}]\` / \`[${runsB.map(r => r.initialStream.streamWallMs).join(', ')}]\``,
+        `- **Raw Scroll Mean A / B:** \`[${runsA.map(r => r.scroll20Hops.tvs.mean).join(', ')}]\` / \`[${runsB.map(r => r.scroll20Hops.tvs.mean).join(', ')}]\``,
+        `- **Raw Scroll p95 A / B:** \`[${runsA.map(r => r.scroll20Hops.tvs.p95).join(', ')}]\` / \`[${runsB.map(r => r.scroll20Hops.tvs.p95).join(', ')}]\``,
+        `- **Raw Sort Means A / B:** \`[${runsA.map(r => r.sort50k.tvs.mean).join(', ')}]\` / \`[${runsB.map(r => r.sort50k.tvs.mean).join(', ')}]\``,
+        `- **Raw DragFling p95 (valid) A / B:** \`[${validFlingA.map(r => r.gridDragFling.frameP95Ms).join(', ')}]\` / \`[${validFlingB.map(r => r.gridDragFling.frameP95Ms).join(', ')}]\``,
+        `- **Raw DragFling TravelTop (all) A / B:** \`[${runsA.map(r => r.gridDragFling.peakScrollDeltaTop).join(', ')}]\` / \`[${runsB.map(r => r.gridDragFling.peakScrollDeltaTop).join(', ')}]\``,
+        `- **Raw DragFling NonEmptyFlights (valid) A / B:** \`[${validFlingA.map(r => r.gridDragFling.workers.nonEmptyDomFlights).join(', ')}]\` / \`[${validFlingB.map(r => r.gridDragFling.workers.nonEmptyDomFlights).join(', ')}]\``
     ].join('\n');
 }
 
@@ -593,6 +755,7 @@ async function initDeviceBenchmarkHud() {
     }
 
     const searchParams  = new URLSearchParams(globalThis.location.search);
+    const defaultPairs  = Math.max(2, Number(searchParams.get('pairs')) || 10);
     const urlPreset     = ['1x1', '5x5', '25x15'].includes(searchParams.get('preset')) ? searchParams.get('preset') : '1x1';
     const initialTopo   = getTopology();
     const badgeClass    = initialTopo.armKey === 'C' ? 'is-arm-c' : (initialTopo.armKey === 'B' ? 'is-two-thread' : '');
@@ -621,7 +784,7 @@ async function initDeviceBenchmarkHud() {
                     <option value="25x15" ${urlPreset === '25x15' ? 'selected' : ''}>Buffer 25×15 (Stress)</option>
                 </select>
                 <button class="devindex-bench-btn is-primary" id="devindex-bench-run" type="button" disabled>Run Page</button>
-                <button class="devindex-bench-btn is-accent" id="devindex-bench-series" type="button" disabled>10p AB/BA</button>
+                <button class="devindex-bench-btn is-accent" id="devindex-bench-series" type="button" disabled>${defaultPairs * 2}p AB/BA</button>
                 <button class="devindex-bench-btn" id="devindex-bench-copy" type="button" disabled>Copy</button>
             </div>
             <pre class="devindex-bench-output" id="devindex-bench-output" hidden></pre>
@@ -689,7 +852,7 @@ async function initDeviceBenchmarkHud() {
         vnodeRelays       : streamWorkers.vnodeRelayMessages
     };
 
-    statusEl.textContent = `Ready (${streamRows} rows in ${streamWallMs}ms · frame p95 ${streamFrameSt.p95}ms · relays ${streamWorkers.vnodeRelayMessages}). Tap Run Page or 10p AB/BA.`;
+    statusEl.textContent = `Ready (${streamRows} rows in ${streamWallMs}ms · frame p95 ${streamFrameSt.p95}ms · relays ${streamWorkers.vnodeRelayMessages}). Tap Run Page or ${defaultPairs * 2}p AB/BA.`;
     runBtn.disabled    = false;
     seriesBtn.disabled = false;
 
@@ -790,7 +953,7 @@ async function initDeviceBenchmarkHud() {
 
             // 3. Real GridDragScroll Diagonal Drag + Kinetic Fling (with per-rAF blank-frame detector)
             const gridDragFling = opts.skipDragFling === true
-                ? { fps: 0, frameP50Ms: 0, frameP95Ms: 0, frameP99Ms: 0, maxRafMs: 0, longFrames50: 0, blankFrames: 0, blankMs: 0, maxBlankStreakMs: 0, minVisibleRows: 0, minVisibleCells: 0, peakScrollDeltaTop: 0, peakScrollDeltaLeft: 0, workers: stopWorkerProbe() }
+                ? { available: false, unavailableReason: 'skipped', inputMode: 'none', deliveredMoves: 0, fps: null, frameP50Ms: null, frameP95Ms: null, frameP99Ms: null, maxRafMs: null, longFrames50: null, blankFrames: null, blankMs: null, maxBlankStreakMs: null, minVisibleRows: 0, minVisibleCells: 0, peakScrollDeltaTop: 0, peakScrollDeltaLeft: 0, totalTravelTop: 0, totalTravelLeft: 0, workers: stopWorkerProbe() }
                 : await runGridDragScrollStrokes(vScroller, hScroller, gridBody);
 
             vScroller.scrollTop = 0;
@@ -857,9 +1020,9 @@ async function initDeviceBenchmarkHud() {
             if (hScroller) hScroller.scrollLeft = 0;
 
             const topo       = getTopology();
-            const hopStats   = stats(hopTvs);
+            const hopStats   = { ...stats(hopTvs), meanUnrounded: hopTvs.reduce((s, x) => s + x, 0) / Math.max(1, hopTvs.length) };
             const hopFrameSt = stats(allHopFrames);
-            const sortStats  = stats(sortTvs);
+            const sortStats  = { ...stats(sortTvs), meanUnrounded: sortTvs.reduce((s, x) => s + x, 0) / Math.max(1, sortTvs.length) };
 
             lastResult = {
                 timestamp : new Date().toISOString(),
@@ -903,7 +1066,9 @@ async function initDeviceBenchmarkHud() {
                 `- **2D Scroll (n=20 hops):** mean \`${hopStats.mean} ± ${hopStats.sd} ms\` (95% CI \`±${hopStats.ci95Half}\`) · p50 \`${hopStats.p50} ms\` · **p95 \`${hopStats.p95} ms\`** · p99 \`${hopStats.p99} ms\` · max \`${hopStats.max} ms\` · nonEmptyFlights \`${scroll20Workers.nonEmptyDomFlights}\` · relays \`${scroll20Workers.vnodeRelays}\``,
                 `  - raw hops: \`[${hopStats.raw.join(', ')}]\``,
                 `- **Sustained 60-Step Sweep:** FPS \`${sweepSummary.fps}\` · frame p50 \`${sweepSummary.frameP50Ms} ms\` · **frame p95 \`${sweepSummary.frameP95Ms} ms\`** · maxRAF \`${sweepSummary.maxRafMs} ms\` · **blankFrames \`${sweepSummary.blankFrames}\` (\`${sweepSummary.blankMs} ms\`, maxStreak \`${sweepSummary.maxBlankStreakMs} ms\`)** · nonEmptyFlights \`${sweepWorkers.nonEmptyDomFlights}\``,
-                `- **GridDragScroll 2D Fling:** FPS \`${gridDragFling.fps}\` · **frame p95 \`${gridDragFling.frameP95Ms} ms\`** · maxRAF \`${gridDragFling.maxRafMs} ms\` · **blankFrames \`${gridDragFling.blankFrames}\` (\`${gridDragFling.blankMs} ms\`, maxStreak \`${gridDragFling.maxBlankStreakMs} ms\`)** · moved \`${gridDragFling.peakScrollDeltaTop}px × ${gridDragFling.peakScrollDeltaLeft}px\` · nonEmptyFlights \`${gridDragFling.workers.nonEmptyDomFlights}\``,
+                gridDragFling.available
+                    ? `- **GridDragScroll 2D Fling (${gridDragFling.inputMode}):** FPS \`${gridDragFling.fps}\` · **frame p95 \`${gridDragFling.frameP95Ms} ms\`** · maxRAF \`${gridDragFling.maxRafMs} ms\` · **blankFrames \`${gridDragFling.blankFrames}\` (\`${gridDragFling.blankMs} ms\`, maxStreak \`${gridDragFling.maxBlankStreakMs} ms\`)** · moved \`${gridDragFling.peakScrollDeltaTop}px × ${gridDragFling.peakScrollDeltaLeft}px\` (total \`${gridDragFling.totalTravelTop}px × ${gridDragFling.totalTravelLeft}px\`, moves \`${gridDragFling.deliveredMoves}\`) · nonEmptyFlights \`${gridDragFling.workers.nonEmptyDomFlights}\` · relays \`${gridDragFling.workers.vnodeRelayMessages}\``
+                    : `- **GridDragScroll 2D Fling (${gridDragFling.inputMode}):** \`UNAVAILABLE (${gridDragFling.unavailableReason}: moved ${gridDragFling.peakScrollDeltaTop}px × ${gridDragFling.peakScrollDeltaLeft}px)\` — excluded from fling aggregates; run manual visual swipe for canvas/blanking`,
                 `- **50k Re-Sort (n=6 warm, 1/col warm-up excluded):** mean \`${sortStats.mean} ± ${sortStats.sd} ms\` (95% CI \`±${sortStats.ci95Half}\`) · p50 \`${sortStats.p50} ms\` · p95 \`${sortStats.p95} ms\` · max \`${sortStats.max} ms\` · maxRAF \`${lastResult.sort50k.maxRafMs} ms\``,
                 `  - raw sorts: \`[${sortStats.raw.join(', ')}]\` (excluded warm-up: \`[${warmupTvs.join(', ')}]\`)`
             ].join('\n');
@@ -912,7 +1077,10 @@ async function initDeviceBenchmarkHud() {
             collapseBtn.textContent = '–';
             outputEl.hidden         = false;
             outputEl.textContent    = lastMarkdown;
-            statusEl.textContent    = `Done! Grid=${lastResult.device.gridViewport}, Scroll p95=${hopStats.p95}ms, DragFling blank=${gridDragFling.blankFrames} (${gridDragFling.blankMs}ms), Sort=${sortStats.mean}ms.`;
+            const flingStatus = gridDragFling.available
+                ? `DragFling(${gridDragFling.inputMode}) moved=${gridDragFling.peakScrollDeltaTop}px blank=${gridDragFling.blankFrames} (${gridDragFling.blankMs}ms)`
+                : `DragFling(${gridDragFling.inputMode})=UNAVAILABLE`;
+            statusEl.textContent    = `Done! Grid=${lastResult.device.gridViewport}, Scroll p95=${hopStats.p95}ms, ${flingStatus}, Sort=${sortStats.mean}ms.`;
             copyBtn.disabled        = false;
             return lastResult;
         } catch (err) {
@@ -977,7 +1145,7 @@ async function initDeviceBenchmarkHud() {
     });
 
     seriesBtn.addEventListener('click', async () => {
-        const pairs  = Math.max(2, Number(searchParams.get('pairs')) || 5);
+        const pairs  = defaultPairs;
         const preset = presetEl.value || '1x1';
         const plan   = [];
         for (let p = 0; p < pairs; p++) {

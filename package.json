@@ -27,7 +27,7 @@
         "devindex:optout"                      : "node ./services/cli.mjs optout",
         "devindex:spider"                      : "node ./services/cli.mjs spider",
         "devindex:update"                      : "node ./services/cli.mjs update --limit 200",
-        "generate-docs-json"                   : "node ./node_modules/neo.mjs/buildScripts/docs/jsdocx.mjs",
+        "generate-docs-json"                   : "node ./node_modules/neo.mjs/buildScripts/docs/generateDocsJson.mjs",
         "lint-public-docs"                     : "node ./buildScripts/lintPublicDocs.mjs",
         "server-start"                         : "webpack serve -c ./node_modules/neo.mjs/buildScripts/webpack/webpack.server.config.mjs --open",
         "test-e2e"                            : "playwright test -c test/playwright/playwright.config.e2e.mjs",
@@ -35,7 +35,7 @@
         "watch-themes"                         : "node ./node_modules/neo.mjs/buildScripts/helpers/watchThemes.mjs"
     },
     "dependencies": {
-        "neo.mjs": "^13.4.0"
+        "neo.mjs": "14.0.0"
     },
     "devDependencies": {
         "@fortawesome/fontawesome-free": "^7.3.0",
@@ -52,6 +52,7 @@
         "fast-glob"                    : "^3.3.3",
         "fs-extra"                     : "^11.4.1",
         "gray-matter"                  : "^4.0.3",
+        "highlight.js"                 : "^11.11.1",
         "highlightjs-line-numbers.js"  : "^2.9.1",
         "html-minifier-terser"         : "^7.2.0",
         "inquirer"                     : "^14.3.1",
@@ -63,6 +64,8 @@
         "neo-agent-skills"             : "^2.9.3",
         "parse5"                       : "^8.1.1",
         "postcss"                      : "^8.5.33",
+        "postcss-selector-parser"      : "^7.1.1",
+        "postcss-value-parser"         : "^4.2.0",
         "sass"                         : "^1.108.2",
         "terser"                       : "^5.51.4",
         "url"                          : "^0.11.4",

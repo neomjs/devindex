@@ -58,7 +58,7 @@
         "inquirer"                     : "^14.3.1",
         "js-yaml"                      : "^5.5.0",
         "jsdoc-api"                    : "^9.3.6",
-        "marked"                       : "^18.2.1",
+        "marked"                       : "^18.3.0",
         "mermaid"                      : "^12.3.0",
         "monaco-editor"                : "0.58.0",
         "neo-agent-skills"             : "^2.10.0",
